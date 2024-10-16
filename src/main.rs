@@ -32,7 +32,10 @@ enum Commands {
     },
     /// Run in listener mode
     Listen {
-        /// The protocol to listen for connection over. NOT IMPLEMENTED!
+        /// Use legacy non nf_tables based rules. NOT YET IMPLEMENTED!
+        #[arg(long)]
+        legacy: Option<bool>,
+        /// The protocol to listen for connection over. NOT YET IMPLEMENTED!
         #[arg(long, value_enum, default_value = "both")]
         protocol: Protocol,
         #[arg(short, long, default_value = "0.0.0.0")]
@@ -65,6 +68,7 @@ async fn main() {
             run_scan(input_file.to_string(), scan_type.clone()).await;
         }
         Commands::Listen {
+            legacy: _,
             protocol: _,
             listen_address,
             access_port,
@@ -137,8 +141,133 @@ async fn run_scan(input_file: String, scan_type: Protocol) {
     }
 }
 
+async fn run_command(command: &str, args: &[&str]) -> tokio::io::Result<()> {
+    let mut child = Command::new(command)
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+
+    let output = child.wait_with_output().await?;
+
+    if !output.status.success() {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        eprintln!(
+            "Command '{}' failed with status {}\nSTDOUT:\n{}\nSTDERR:\n{}",
+            command, output.status, stdout, stderr
+        );
+        return Err(tokio::io::Error::new(
+            tokio::io::ErrorKind::Other,
+            "Command execution failed",
+        ));
+    }
+    Ok(())
+}
+
 async fn setup_firewall(access_port: &str, listener_port: &str) {
-    // iptables -t nat -A PREROUTING -p tcp --dport 22 -j ACCEPT && iptables -t nat -A PREROUTING -p tcp -m multiport --dports 1:65535 -j NAT --to-destination :5555
+    // Ensure the nat table and prerouting chain exist
+    run_command("nft", &["add", "table", "ip", "nat"])
+        .await
+        .ok();
+    run_command(
+        "nft",
+        &[
+            "add",
+            "chain",
+            "ip",
+            "nat",
+            "prerouting",
+            "{",
+            "type",
+            "nat",
+            "hook",
+            "prerouting",
+            "priority",
+            "0",
+            ";",
+            "}",
+        ],
+    )
+    .await
+    .ok();
+
+    // Anti-lockout rule: allow access on the specified access port
+    let anti_lockout_cmd = vec![
+        "add",
+        "rule",
+        "ip",
+        "nat",
+        "prerouting",
+        "tcp",
+        "dport",
+        access_port,
+        "accept",
+    ];
+
+    // TCP redirection rule for other ports
+    let tcp_redirection_cmd = vec![
+        "add",
+        "rule",
+        "ip",
+        "nat",
+        "prerouting",
+        "tcp",
+        "dport",
+        "1-65535",
+        "dnat",
+        "to",
+        listener_port,
+    ];
+
+    // UDP redirection rule for other UDP ports
+    let udp_redirection_cmd = vec![
+        "add",
+        "rule",
+        "ip",
+        "nat",
+        "prerouting",
+        "udp",
+        "dport",
+        "1-65535",
+        "dnat",
+        "to",
+        listener_port,
+    ];
+
+    // Execute the rules
+    run_command("nft", &anti_lockout_cmd)
+        .await
+        .unwrap_or_else(|e| {
+            eprintln!("Failed to set anti-lockout rule: {}", e);
+        });
+    run_command("nft", &tcp_redirection_cmd)
+        .await
+        .unwrap_or_else(|e| {
+            eprintln!("Failed to set TCP redirection rule: {}", e);
+        });
+    run_command("nft", &udp_redirection_cmd)
+        .await
+        .unwrap_or_else(|e| {
+            eprintln!("Failed to set UDP redirection rule: {}", e);
+        });
+}
+
+async fn teardown_firewall(access_port: &str, listener_port: &str) {
+    // TODO: update to handle removing rules by their handles, rather than flushing all rules.
+    let flush_cmd = vec!["flush", "chain", "ip", "nat", "prerouting"];
+
+    if let Err(e) = run_command("nft", &flush_cmd).await {
+        eprintln!("Failed to flush nftables chain: {}", e);
+    }
+}
+
+async fn setup_firewall_legacy(access_port: &str, listener_port: &str) {
+    // iptables -t nat -A PREROUTING -p tcp --dport 22 -j ACCEPT
+    // iptables -t nat -A PREROUTING -p tcp -m multiport --dports 1:65535 -j DNAT --to-destination :2000
+    let access_port = format!(":{}", access_port);
+    let listener_port = format!(":{}", listener_port);
+
     let anti_lockout_args = vec![
         "-t",
         "nat",
@@ -147,7 +276,7 @@ async fn setup_firewall(access_port: &str, listener_port: &str) {
         "-p",
         "tcp",
         "--dport",
-        "{}",
+        &access_port,
         "-j",
         "ACCEPT",
     ];
@@ -169,44 +298,25 @@ async fn setup_firewall(access_port: &str, listener_port: &str) {
         &listener_port,
     ];
 
-    let mut args_clone = anti_lockout_args.clone();
-    args_clone[7] = access_port;
-    let output = Command::new("iptables")
-        .args(&args_clone)
-        .output()
-        .await
-        .expect("Failed to create iptables rule");
-
-    if !output.status.success() {
-        eprintln!("Failed to set iptables rule");
+    // Execute the iptables commands with output handling
+    if let Err(e) = run_command("iptables", &anti_lockout_args).await {
+        eprintln!("Failed to set iptables anti-lockout rule: {}", e);
     }
 
-    // Redirect all other TCP ports to the listener
-    let output = Command::new("iptables")
-        .args(&tcp_redirection_args)
-        .output()
-        .await
-        .expect("Failed to establish TCP redirection rule");
-
-    if !output.status.success() {
-        eprintln!("Failed to set iptables rule for TCP redirection");
+    if let Err(e) = run_command("iptables", &tcp_redirection_args).await {
+        eprintln!("Failed to set iptables TCP redirection rule: {}", e);
     }
 
-    // Redirect all UDP ports to the UDP listener
-    let mut args_clone = tcp_redirection_args.clone();
-    args_clone[5] = "udp";
-    let output = Command::new("iptables")
-        .args(&args_clone)
-        .output()
-        .await
-        .expect("Failed to establish UDP redirection rule");
+    // Modify the arguments for UDP redirection
+    let mut udp_redirection_args = tcp_redirection_args.clone();
+    udp_redirection_args[5] = "udp"; // Change protocol to UDP
 
-    if !output.status.success() {
-        eprintln!("Failed to set iptables rule for UDP redirection");
+    if let Err(e) = run_command("iptables", &udp_redirection_args).await {
+        eprintln!("Failed to set iptables UDP redirection rule: {}", e);
     }
 }
 
-async fn teardown_firewall(access_port: &str, listener_port: &str) {
+async fn teardown_firewall_legacy(access_port: &str, listener_port: &str) {
     // iptables -t nat -D PREROUTING -p tcp --dport 22 -j ACCEPT && iptables -t nat -D PREROUTING -p tcp -m multiport --dports 1:65535 -j DNAT --to-destination :5555
     let anti_lockout_args = vec![
         "-t",
