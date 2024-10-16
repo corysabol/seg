@@ -1,52 +1,73 @@
+LISTENER_IP = "192.168.50.10"
+SCANNER_IP = "192.168.50.11"
+
+def assign_ip(vm_name)
+  case vm_name
+  when "listener"
+    LISTENER_IP
+  when "scanner"
+    SCANNER_IP
+  else
+    raise "Unknown VM name: #{vm_name}"
+  end
+end
+
 Vagrant.configure("2") do |config|
   config.vm.box = "generic/ubuntu2004"  # Ubuntu 20.04 LTS
 
-  # Configure common resources (2GB RAM, 2 CPUs) for both VMs
-  config.vm.provider "hyperv" do |hv|
-    hv.memory = 2048
-    hv.cpus = 2
+  # Get name from evn
+  vm_name = ENV["VAGRANT_VM_HOSTNAME"] || "listener"
+
+  ip_address = assign_ip(vm_name)
+  
+  config.vm.define vm_name do |vm_config|
+    vm_config.vm.hostname = vm_name
+    vm_config.vm.network "private_network", ip: ip_address
+
+    # Configure common resources (2GB RAM, 2 CPUs) for both VMs
+    vm_config.vm.provider "hyperv" do |hv|
+      hv.memory = 2048
+      hv.cpus = 2
+    end
+
+    # Mount the project directory into the VM for building the tool
+    vm_config.vm.synced_folder "../..", "/vagrant", type: "rsync", rsync__exclude: [".git/", "target/"]
+
+    # Provision both VMs: Install Docker, Rust, and dependencies
+    vm_config.vm.provision "shell", inline: <<-SHELL
+      # Install necessary tools
+      sudo apt-get update
+      sudo apt-get install -y docker.io nftables curl build-essential gcc make
+
+      # Enable Docker and add vagrant user to the Docker group
+      sudo systemctl start docker
+      sudo usermod -aG docker vagrant
+
+      # Install Rust via rustup
+      curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+      source $HOME/.cargo/env
+
+      # Change to the project directory and build the Rust binary
+      cd /vagrant
+      cargo build --release
+    SHELL
+
+    # Define different roles based on the VM name
+    vm_config.vm.provision "shell", inline: <<-SHELL, run: "always"
+      case "$(hostname)" in
+        "listener")
+          echo "Starting in listener mode"
+          ./target/release/seg listen --protocol both
+          ;;
+        "scanner")
+          echo "Starting in scanner mode"
+          ./target/release/seg scan --target <listener-ip>:8080
+          ;;
+        *)
+          echo "Unknown role, exiting..."
+          exit 1
+          ;;
+      esac
+    SHELL
   end
-
-  # Use a private network so the VMs can communicate directly
-  config.vm.network "private_network", type: "dhcp"
-
-  # Mount the project directory into the VM for building the tool
-  config.vm.synced_folder "../..", "/vagrant", type: "rsync", rsync__exclude: [".git/", "target/"]
-
-  # Provision both VMs: Install Docker, Rust, and dependencies
-  config.vm.provision "shell", inline: <<-SHELL
-    # Install necessary tools
-    sudo apt-get update
-    sudo apt-get install -y docker.io nftables curl build-essential gcc make
-
-    # Enable Docker and add vagrant user to the Docker group
-    sudo systemctl start docker
-    sudo usermod -aG docker vagrant
-
-    # Install Rust via rustup
-    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-    source $HOME/.cargo/env
-
-    # Change to the project directory and build the Rust binary
-    cd /vagrant
-    cargo build --release
-  SHELL
-
-  # Define different roles based on the VM name
-  config.vm.provision "shell", inline: <<-SHELL, run: "always"
-    case "$(hostname)" in
-      "listener")
-        echo "Starting in listener mode"
-        ./target/release/seg listen --protocol both
-        ;;
-      "scanner")
-        echo "Starting in scanner mode"
-        ./target/release/seg scan --target <listener-ip>:8080
-        ;;
-      *)
-        echo "Unknown role, exiting..."
-        exit 1
-        ;;
-    esac
-  SHELL
 end
