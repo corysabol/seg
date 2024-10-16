@@ -1,12 +1,14 @@
 use clap::{Parser, Subcommand};
-use std::fs::OpenOptions;
 use std::net::IpAddr;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime};
-use tokio::io::{self, AsyncBufReadExt, BufReader};
+use std::time::SystemTime;
+use std::vec;
+use tokio::fs::OpenOptions;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter};
 use tokio::net::{TcpListener, UdpSocket};
-use tokio::time::sleep;
+use tokio::process::Command;
+use tokio::signal::ctrl_c;
 
 #[derive(Parser)]
 #[command(name = "Seg network segmentation scanner")]
@@ -25,22 +27,27 @@ enum Commands {
         /// Path to the file containing lines of network-name,listener-ip,network-range
         #[arg(short, long)]
         input_file: String,
-        #[arg(short, long, value_enum)]
-        scan_type: ScanType,
+        #[arg(short, long, value_enum, default_value = "both")]
+        scan_type: Protocol,
     },
     /// Run in listener mode
     Listen {
+        /// The protocol to listen for connection over. NOT IMPLEMENTED!
+        #[arg(long, value_enum, default_value = "both")]
+        protocol: Protocol,
         #[arg(short, long, default_value = "0.0.0.0")]
-        address: String,
-        /// Port(s) to listen on for both TCP and UDP
-        /// Can be of form n-m, n
-        #[arg(short, long, default_value = "1-65535")]
-        ports: String,
+        listen_address: String,
+        /// Port used to access the host (typicall 22 for ssh)
+        #[arg(short, long, default_value = "22")]
+        access_port: String,
+        /// Port to listen on for both TCP and UDP
+        #[arg(short, long, default_value = "5555")]
+        port: String,
     },
 }
 
 #[derive(Clone, clap::ValueEnum)]
-enum ScanType {
+enum Protocol {
     TCP,
     UDP,
     BOTH,
@@ -57,8 +64,16 @@ async fn main() {
         } => {
             run_scan(input_file.to_string(), scan_type.clone()).await;
         }
-        Commands::Listen { address, ports } => {
-            run_listener(address.clone(), ports.clone()).await;
+        Commands::Listen {
+            protocol: _,
+            listen_address,
+            access_port,
+            port,
+        } => {
+            // We need to hook up ctrl-c signal so that we can tear down the iptables rule when
+            // exiting
+            // TODO: better overall error handling so that we can clean up on failures
+            run_listener(listen_address.clone(), access_port.clone(), port.clone()).await;
         }
     }
 }
@@ -79,7 +94,7 @@ impl ScanStats {
     }
 }
 
-async fn run_scan(input_file: String, scan_type: ScanType) {
+async fn run_scan(input_file: String, scan_type: Protocol) {
     let file = tokio::fs::File::open(&input_file)
         .await
         .expect("Unable to open input file.");
@@ -89,7 +104,7 @@ async fn run_scan(input_file: String, scan_type: ScanType) {
 
     let mut lines = reader.lines();
 
-    while let Some(Ok(entry)) = lines.next_line().await {
+    while let Ok(Some(entry)) = lines.next_line().await {
         // Parse the line and skip it if it isn't in the right format
         let parts: Vec<String> = entry.split(',').map(String::from).collect();
         if parts.len() != 3 {
@@ -122,22 +137,162 @@ async fn run_scan(input_file: String, scan_type: ScanType) {
     }
 }
 
+async fn setup_firewall(access_port: &str, listener_port: &str) {
+    // iptables -t nat -A PREROUTING -p tcp --dport 22 -j ACCEPT && iptables -t nat -A PREROUTING -p tcp -m multiport --dports 1:65535 -j NAT --to-destination :5555
+    let anti_lockout_args = vec![
+        "-t",
+        "nat",
+        "-A",
+        "PREROUTING",
+        "-p",
+        "tcp",
+        "--dport",
+        "{}",
+        "-j",
+        "ACCEPT",
+    ];
+
+    let tcp_redirection_args = vec![
+        "-t",
+        "nat",
+        "-A",
+        "PREROUTING",
+        "-p",
+        "tcp",
+        "-m",
+        "multiport",
+        "--dports",
+        "1:65535",
+        "-j",
+        "NAT",
+        "--to-destination",
+        &listener_port,
+    ];
+
+    let mut args_clone = anti_lockout_args.clone();
+    args_clone[7] = access_port;
+    let output = Command::new("iptables")
+        .args(&args_clone)
+        .output()
+        .await
+        .expect("Failed to create iptables rule");
+
+    if !output.status.success() {
+        eprintln!("Failed to set iptables rule");
+    }
+
+    // Redirect all other TCP ports to the listener
+    let output = Command::new("iptables")
+        .args(&tcp_redirection_args)
+        .output()
+        .await
+        .expect("Failed to establish TCP redirection rule");
+
+    if !output.status.success() {
+        eprintln!("Failed to set iptables rule for TCP redirection");
+    }
+
+    // Redirect all UDP ports to the UDP listener
+    let mut args_clone = tcp_redirection_args.clone();
+    args_clone[5] = "udp";
+    let output = Command::new("iptables")
+        .args(&args_clone)
+        .output()
+        .await
+        .expect("Failed to establish UDP redirection rule");
+
+    if !output.status.success() {
+        eprintln!("Failed to set iptables rule for UDP redirection");
+    }
+}
+
+async fn teardown_firewall(access_port: &str, listener_port: &str) {
+    // iptables -t nat -D PREROUTING -p tcp --dport 22 -j ACCEPT && iptables -t nat -D PREROUTING -p tcp -m multiport --dports 1:65535 -j DNAT --to-destination :5555
+    let anti_lockout_args = vec![
+        "-t",
+        "nat",
+        "-D",
+        "PREROUTING",
+        "-p",
+        "tcp",
+        "--dport",
+        access_port,
+        "-j",
+        "ACCEPT",
+    ];
+
+    let tcp_redirection_args = vec![
+        "-t",
+        "nat",
+        "-D",
+        "PREROUTING",
+        "-p",
+        "tcp",
+        "-m",
+        "multiport",
+        "--dports",
+        "1:65535",
+        "-j",
+        "NAT",
+        "--to-destination",
+        &listener_port,
+    ];
+
+    // Avoid redirecting our access port such as 22 to the listener so we can still get into the
+    // listener host.
+    let mut args_clone = anti_lockout_args.clone();
+    args_clone[7] = access_port;
+    let output = Command::new("iptables")
+        .args(&args_clone)
+        .output()
+        .await
+        .expect("Failed to delete iptables rule");
+
+    if !output.status.success() {
+        eprintln!("Failed to remove iptables rule");
+    }
+
+    // Redirect all other TCP ports to the listener
+    let output = Command::new("iptables")
+        .args(&tcp_redirection_args)
+        .output()
+        .await
+        .expect("Failed to delete TCP redirection rule");
+
+    if !output.status.success() {
+        eprintln!("Failed to remove iptables rule for TCP redirection");
+    }
+
+    // Redirect all UDP ports to the UDP listener
+    let mut args_clone = tcp_redirection_args.clone();
+    args_clone[5] = "udp";
+    let output = Command::new("iptables")
+        .args(&args_clone)
+        .output()
+        .await
+        .expect("Failed to delete UDP redirection rule");
+
+    if !output.status.success() {
+        eprintln!("Failed to remove iptables rule for UDP redirection");
+    }
+}
+
 async fn scan_nmap(
     listener_ip: &str,
     output_file: &str,
-    scan_type: ScanType,
+    scan_type: Protocol,
     scan_stats: Arc<Mutex<ScanStats>>,
 ) {
     let mut nmap_args = vec![];
 
     let output_file = match scan_type {
-        ScanType::TCP => format!("{}_tcp", output_file),
-        ScanType::UDP => format!("{}_udp", output_file),
-        ScanType::BOTH => format!("{}_both", output_file),
+        Protocol::TCP => format!("{}_tcp", output_file),
+        Protocol::UDP => format!("{}_udp", output_file),
+        Protocol::BOTH => format!("{}_both", output_file),
     };
 
     match scan_type {
-        ScanType::TCP => {
+        Protocol::TCP => {
             nmap_args.extend(vec![
                 "-p",
                 "1-65535",
@@ -149,7 +304,7 @@ async fn scan_nmap(
                 &output_file,
             ]);
         }
-        ScanType::UDP => {
+        Protocol::UDP => {
             nmap_args.extend(vec![
                 "-p",
                 "1-65535",
@@ -161,7 +316,7 @@ async fn scan_nmap(
                 &output_file,
             ]);
         }
-        ScanType::BOTH => {
+        Protocol::BOTH => {
             nmap_args.extend(vec![
                 "-p",
                 "1-65535",
@@ -188,7 +343,7 @@ async fn scan_nmap(
         let reader = BufReader::new(stdout);
 
         let mut lines = reader.lines();
-        while let Some(Ok(line)) = lines.next() {
+        while let Ok(Some(line)) = lines.next_line().await {
             if line.contains("open") {
                 let mut stats = scan_stats.lock().unwrap();
                 stats.open_ports_found += 1;
@@ -201,7 +356,7 @@ async fn scan_nmap(
         }
     }
 
-    let exit_status = output.wait().expect("Nmap process failed.");
+    let exit_status = output.wait().await.expect("Nmap process failed.");
     if exit_status.success() {
         println!(
             "Scan completed for {}. Results saved to {}.nmap",
@@ -212,99 +367,109 @@ async fn scan_nmap(
     }
 }
 
-async fn run_listener(address: String, ports: String) {
-    // Parse the ports
-    let parts: Vec<&str> = ports.split('-').collect();
-    if parts.len() > 2 || parts.len() < 1 {
-        eprintln!("Error invalid port specification {}", ports);
-        return;
-    }
-
-    let lower: u32 = parts[0]
+async fn run_listener(address: String, access_port: String, port: String) {
+    let access_port: u16 = access_port
         .parse()
-        .expect(&format!("Error invalid port specification {}", ports));
-    let upper: u32 = if parts.len() == 2 {
-        parts[1]
-            .parse()
-            .expect(&format!("Error invalid port specification {}", ports))
-    } else {
-        lower
-    };
+        .expect(&format!("Error invalid port specification {}", port));
+    let port: u16 = port
+        .parse()
+        .expect(&format!("Error invalid port specification {}", port));
 
     let address: IpAddr = address
         .parse()
         .expect(&format!("Invalid listener address specified {}", address));
 
+    // Establish IP tables rules
+    setup_firewall(
+        access_port.to_string().clone().as_str(),
+        port.to_string().clone().as_str(),
+    )
+    .await;
+
+    // Open log file and wrap it in a shared buffered writer for performance
     let log_file_path = "connections.log";
-    let mut log_file = OpenOptions::new()
+    let log_file = OpenOptions::new()
         .append(true)
         .create(true)
         .open(log_file_path)
+        .await
         .expect("Unable to open log file.");
 
-    // Listen on specified port range
-    for port in lower..=upper {
-        let addr = address.clone();
-        let log_file = log_file_path.to_string();
+    let log_writer = BufWriter::new(log_file);
+    let log_writer = Arc::new(tokio::sync::Mutex::new(log_writer));
 
-        tokio::spawn(async move {
-            if let Ok(listener) = TcpListener::bind((addr, port)).await {
-                loop {
-                    match listener.accept().await {
-                        Ok((socket, addr)) => {
-                            let timestamp = SystemTime::now();
-                            let log_entry =
-                                format!("{:?}/tcp_connect/{:?}/{}", timestamp, addr, port);
-                            println!("{}", log_entry);
-                            let mut log_file = OpenOptions::new()
-                                .append(true)
-                                .create(true)
-                                .open(log_file)
-                                .expect("Unable to open log file.");
-                            log_file
-                                .write_all(log_entry.as_bytes())
-                                .expect("Failed to write to log file.");
-                        }
-                        Err(e) => {
-                            eprintln!("Failed to accept TCP connection on port {}: {}", port, e);
-                        }
-                    }
-                }
-            } else {
-                eprintln!("Failed to bind TCP listener on port {}", port);
+    // Bind TCP and UDP listeners
+    let addr = address.clone();
+
+    let tcp_listener = TcpListener::bind((addr, port))
+        .await
+        .expect("Unable to bind TCP listener");
+    let udp_listener = UdpSocket::bind((addr, port))
+        .await
+        .expect("Unable to bind UDP listener");
+
+    // Create tokio tasks
+    let tcp_task = handle_tcp(tcp_listener, log_writer.clone());
+    let udp_task = handle_udp(udp_listener, log_writer.clone());
+
+    tokio::select! {
+        _ = tcp_task => {},
+        _ = udp_task => {},
+        _ = ctrl_c() => {
+            println!("Shutting down... Cleaning up iptable rules");
+            teardown_firewall(access_port.to_string().as_str(), port.to_string().as_str()).await;
+        },
+    }
+}
+
+async fn write_to_log(
+    log_writer: Arc<tokio::sync::Mutex<BufWriter<tokio::fs::File>>>,
+    entry: String,
+) {
+    let mut writer = log_writer.lock().await;
+    if let Err(e) = writer.write_all(entry.as_bytes()).await {
+        eprintln!("Failed to write to log: {}", e);
+    }
+    if let Err(e) = writer.flush().await {
+        eprintln!("Failed to flush log writer: {}", e);
+    }
+}
+
+async fn handle_tcp(
+    tcp_listener: TcpListener,
+    log_writer: Arc<tokio::sync::Mutex<BufWriter<tokio::fs::File>>>,
+) {
+    loop {
+        match tcp_listener.accept().await {
+            Ok((_socket, addr)) => {
+                let timestamp = SystemTime::now();
+                let log_entry = format!("{:?}/tcp_connect/{:?}", timestamp, addr);
+                println!("{}", log_entry);
+                write_to_log(log_writer.clone(), log_entry).await;
             }
-        });
-
-        let addr = address.clone();
-        let log_file = log_file_path.clone();
-
-        tokio::spawn(async move {
-            if let Ok(udp_socket) = UdpSocket::bind((addr, port)).await {
-                let mut buf = [0; 1024];
-                loop {
-                    match udp_socket.recv_from(&mut buf).await {
-                        Ok((amt, src)) => {
-                            let timestamp = SystemTime::now();
-                            let log_entry =
-                                format!("{:?}/udp_connect/{:?}/{}", timestamp, src, port);
-                            println!("{}", log_entry);
-                            let mut log_file = OpenOptions::new()
-                                .append(true)
-                                .create(true)
-                                .open(log_file)
-                                .expect("Unable to open log file.");
-                            log_file
-                                .write_all(log_entry.as_bytes())
-                                .expect("Failed to write to log file.");
-                        }
-                        Err(e) => {
-                            eprintln!("Failed to receive UDP packet on port {}: {}", port, e);
-                        }
-                    }
-                }
-            } else {
-                eprintln!("Failed to bind UDP socket on port {}", port);
+            Err(e) => {
+                eprintln!("Failed to accept TCP connection on port {}", e);
             }
-        });
+        }
+    }
+}
+
+async fn handle_udp(
+    udp_socket: UdpSocket,
+    log_writer: Arc<tokio::sync::Mutex<BufWriter<tokio::fs::File>>>,
+) {
+    let mut buf = [0; 1024];
+    loop {
+        match udp_socket.recv_from(&mut buf).await {
+            Ok((_amt, src)) => {
+                let timestamp = SystemTime::now();
+                let log_entry = format!("{:?}/udp_connect/{:?}", timestamp, src);
+                println!("{}", log_entry);
+                write_to_log(log_writer.clone(), log_entry).await;
+            }
+            Err(e) => {
+                eprintln!("Failed to receive UDP packet on port {}", e);
+            }
+        }
     }
 }
