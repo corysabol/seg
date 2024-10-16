@@ -24,7 +24,7 @@ struct Cli {
 enum Commands {
     /// Run in scanner mode
     Scan {
-        /// Path to the file containing lines of network-name,listener-ip,network-range
+        /// Path to the file containing lines of network-name,listener-ip
         #[arg(short, long)]
         input_file: String,
         #[arg(short, long, value_enum, default_value = "both")]
@@ -111,7 +111,7 @@ async fn run_scan(input_file: String, scan_type: Protocol) {
     while let Ok(Some(entry)) = lines.next_line().await {
         // Parse the line and skip it if it isn't in the right format
         let parts: Vec<String> = entry.split(',').map(String::from).collect();
-        if parts.len() != 3 {
+        if parts.len() != 2 {
             eprintln!("Invalid line format: {}", entry);
             continue;
         }
@@ -129,15 +129,13 @@ async fn run_scan(input_file: String, scan_type: Protocol) {
         let scan_stats = Arc::clone(&scan_stats);
         let scan_type = scan_type.clone();
 
-        tokio::spawn(async move {
-            scan_nmap(
-                &listener_ip,
-                &format!("scan_{}", network_name),
-                scan_type,
-                scan_stats,
-            )
-            .await;
-        });
+        scan_nmap(
+            &listener_ip,
+            &format!("scan_{}", network_name),
+            scan_type,
+            scan_stats,
+        )
+        .await;
     }
 }
 
@@ -549,6 +547,12 @@ async fn handle_tcp(
     tcp_listener: TcpListener,
     log_writer: Arc<tokio::sync::Mutex<BufWriter<tokio::fs::File>>>,
 ) {
+    println!(
+        "Listening for TCP connections on {:?}",
+        tcp_listener
+            .local_addr()
+            .expect("Failed to get local addr of TCP listener")
+    );
     loop {
         match tcp_listener.accept().await {
             Ok((_socket, addr)) => {
@@ -569,6 +573,12 @@ async fn handle_udp(
     log_writer: Arc<tokio::sync::Mutex<BufWriter<tokio::fs::File>>>,
 ) {
     let mut buf = [0; 1024];
+    println!(
+        "Listening for UDP connections on {:?}",
+        udp_socket
+            .local_addr()
+            .expect("Failed to get local addr of UDP listener")
+    );
     loop {
         match udp_socket.recv_from(&mut buf).await {
             Ok((_amt, src)) => {
