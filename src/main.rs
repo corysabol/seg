@@ -231,9 +231,9 @@ table ip filter {{
 
 async fn teardown_nft_rules() {
     let cleanup_commands = [
-        "flush ruleset",
         "delete table ip nat",
         "delete table ip filter",
+        "flush ruleset",
     ];
 
     println!("Cleaning up nft rules...");
