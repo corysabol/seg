@@ -1,4 +1,5 @@
 use clap::{Parser, Subcommand};
+use std::io::Write;
 use std::net::IpAddr;
 use std::process::Stdio;
 use std::sync::{Arc, Mutex};
@@ -142,6 +143,7 @@ async fn run_scan(input_file: String, scan_type: Protocol) {
 async fn run_command(command: &str, args: &[&str], input: Option<String>) -> tokio::io::Result<()> {
     let mut child = Command::new(command)
         .args(args)
+        .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()?;
@@ -152,7 +154,8 @@ async fn run_command(command: &str, args: &[&str], input: Option<String>) -> tok
                 stdin
                     .write_all(input.as_bytes())
                     .await
-                    .expect("Failed to write input to command stdin");
+                    .expect("Failed to write rules to nft stdin");
+                stdin.shutdown().await.expect("Failed to flush stdin");
             }
             None => {}
         }
@@ -178,34 +181,50 @@ async fn run_command(command: &str, args: &[&str], input: Option<String>) -> tok
 async fn setup_nft_rules(access_port: &str, listener_port: &str) {
     let nft_rules = format!(
         r#"
-    flush rulese
+flush ruleset
 
-    table ip nat {{
-        chain prerouting {{
-            type nat hook prerouting priority 0;
-            # avoid locking ourselves out by not forwarding the access port
-            tcp dport {access_port} counter accept
-            tcp dport != {listener_port} counter redirect to :{listener_port}
-            udp dport != {listener_port} counter redirect to :{listener_port}
+table ip nat {{
+    chain prerouting {{
+        type nat hook prerouting priority 0;
+        # avoid locking ourselves out by not forwarding the access port
+        tcp dport {access_port} counter accept
+        tcp dport != {listener_port} counter redirect to :{listener_port}
+        udp dport != {listener_port} counter redirect to :{listener_port}
 
-        }}
     }}
+}}
 
-    table ip filter {{
-        chain input {{
-            type filter hook input priority 0; policy accept;
-            # Always accept listener port traffic
-            tcp dport {listener_port} counter accept
-            tcp dport != {listener_port} counter accept
-            udp dport != {listener_port} counter accept
-        }}
+table ip filter {{
+    chain input {{
+        type filter hook input priority 0; policy accept;
+        # Always accept listener port traffic
+        tcp dport {access_port} counter accept
+        tcp dport != {access_port} counter accept
+        udp dport 1-65535 counter accept
     }}
-    "#
+}}"#
     );
 
     println!("Setting up firewall rules with nft:\n{}", nft_rules);
 
-    run_command("nft", &vec!["-f", "-"], Some(nft_rules))
+    // Create a temp file to use with nft
+    let mut temp_file = tempfile::Builder::new()
+        .prefix("seg_nft_rules")
+        .suffix(".txt")
+        .tempfile()
+        .expect("Failed to open temp file for nft rules");
+
+    write!(temp_file, "{}", nft_rules).expect("Failed to write nft rules to temp file");
+
+    let temp_file_path = temp_file.path();
+    let temp_file_path = temp_file_path.to_owned();
+    let temp_file_path = temp_file_path
+        .to_str()
+        .expect("Failed to get temp file path");
+
+    println!("Rules written to {:?}", temp_file_path);
+
+    run_command("nft", &vec!["-f", temp_file_path], None)
         .await
         .expect("Failed to set rules with nft");
 }
@@ -217,6 +236,7 @@ async fn teardown_nft_rules() {
         "delete table ip filter",
     ];
 
+    println!("Cleaning up nft rules...");
     for cmd in &cleanup_commands {
         if let Err(e) = run_command("nft", &[cmd], None).await {
             eprintln!("Failed to remove nft rules: {}, {}", cmd, e);
@@ -395,8 +415,8 @@ async fn handle_tcp(
     loop {
         match tcp_listener.accept().await {
             Ok((_socket, addr)) => {
-                let timestamp = SystemTime::now();
-                let log_entry = format!("{:?}/tcp_connect/{:?}", timestamp, addr);
+                let time = chrono::Utc::now();
+                let log_entry = format!("{}/tcp_connect/{:?}", time, addr);
                 println!("{}", log_entry);
                 write_to_log(log_writer.clone(), log_entry).await;
             }
@@ -421,8 +441,8 @@ async fn handle_udp(
     loop {
         match udp_socket.recv_from(&mut buf).await {
             Ok((_amt, src)) => {
-                let timestamp = SystemTime::now();
-                let log_entry = format!("{:?}/udp_connect/{:?}", timestamp, src);
+                let time = chrono::Utc::now();
+                let log_entry = format!("{:?}/udp_connect/{:?}", time, src);
                 println!("{}", log_entry);
                 write_to_log(log_writer.clone(), log_entry).await;
             }
