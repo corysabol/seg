@@ -416,7 +416,7 @@ async fn handle_tcp(
         match tcp_listener.accept().await {
             Ok((_socket, addr)) => {
                 let time = chrono::Utc::now();
-                let log_entry = format!("{}/tcp_connect/{:?}", time, addr);
+                let log_entry = format!("{}/tcp_connect/{:?}\n", time, addr);
                 println!("{}", log_entry);
                 write_to_log(log_writer.clone(), log_entry).await;
             }
@@ -442,7 +442,7 @@ async fn handle_udp(
         match udp_socket.recv_from(&mut buf).await {
             Ok((_amt, src)) => {
                 let time = chrono::Utc::now();
-                let log_entry = format!("{:?}/udp_connect/{:?}", time, src);
+                let log_entry = format!("{:?}/udp_connect/{:?}\n", time, src);
                 println!("{}", log_entry);
                 write_to_log(log_writer.clone(), log_entry).await;
             }
