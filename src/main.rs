@@ -139,12 +139,24 @@ async fn run_scan(input_file: String, scan_type: Protocol) {
     }
 }
 
-async fn run_command(command: &str, args: &[&str]) -> tokio::io::Result<()> {
+async fn run_command(command: &str, args: &[&str], input: Option<String>) -> tokio::io::Result<()> {
     let mut child = Command::new(command)
         .args(args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()?;
+
+    if let Some(mut stdin) = child.stdin.take() {
+        match input {
+            Some(input) => {
+                stdin
+                    .write_all(input.as_bytes())
+                    .await
+                    .expect("Failed to write input to command stdin");
+            }
+            None => {}
+        }
+    }
 
     let output = child.wait_with_output().await?;
 
@@ -163,225 +175,52 @@ async fn run_command(command: &str, args: &[&str]) -> tokio::io::Result<()> {
     Ok(())
 }
 
-async fn setup_firewall(access_port: &str, listener_port: &str) {
-    // Ensure the nat table and prerouting chain exist
-    run_command("nft", &["add", "table", "ip", "nat"])
-        .await
-        .ok();
-    run_command(
-        "nft",
-        &[
-            "add",
-            "chain",
-            "ip",
-            "nat",
-            "prerouting",
-            "{",
-            "type",
-            "nat",
-            "hook",
-            "prerouting",
-            "priority",
-            "0",
-            ";",
-            "}",
-        ],
-    )
-    .await
-    .ok();
+async fn setup_nft_rules(access_port: &str, listener_port: &str) {
+    let nft_rules = format!(
+        r#"
+    flush rulese
 
-    // Anti-lockout rule: allow access on the specified access port
-    let anti_lockout_cmd = vec![
-        "add",
-        "rule",
-        "ip",
-        "nat",
-        "prerouting",
-        "tcp",
-        "dport",
-        access_port,
-        "accept",
-    ];
+    table ip nat {{
+        chain prerouting {{
+            type nat hook prerouting priority 0;
+            # avoid locking ourselves out by not forwarding the access port
+            tcp dport {access_port} counter accept
+            tcp dport != {listener_port} counter redirect to :{listener_port}
+            udp dport != {listener_port} counter redirect to :{listener_port}
 
-    // TCP redirection rule for other ports
-    let tcp_redirection_cmd = vec![
-        "add",
-        "rule",
-        "ip",
-        "nat",
-        "prerouting",
-        "tcp",
-        "dport",
-        "1-65535",
-        "dnat",
-        "to",
-        listener_port,
-    ];
+        }}
+    }}
 
-    // UDP redirection rule for other UDP ports
-    let udp_redirection_cmd = vec![
-        "add",
-        "rule",
-        "ip",
-        "nat",
-        "prerouting",
-        "udp",
-        "dport",
-        "1-65535",
-        "dnat",
-        "to",
-        listener_port,
-    ];
+    table ip filter {{
+        chain input {{
+            type filter hook input priority 0; policy accept;
+            # Always accept listener port traffic
+            tcp dport {listener_port} counter accept
+            tcp dport != {listener_port} counter accept
+            udp dport != {listener_port} counter accept
+        }}
+    }}
+    "#
+    );
 
-    // Execute the rules
-    run_command("nft", &anti_lockout_cmd)
+    println!("Setting up firewall rules with nft:\n{}", nft_rules);
+
+    run_command("nft", &vec!["-f", "-"], Some(nft_rules))
         .await
-        .unwrap_or_else(|e| {
-            eprintln!("Failed to set anti-lockout rule: {}", e);
-        });
-    run_command("nft", &tcp_redirection_cmd)
-        .await
-        .unwrap_or_else(|e| {
-            eprintln!("Failed to set TCP redirection rule: {}", e);
-        });
-    run_command("nft", &udp_redirection_cmd)
-        .await
-        .unwrap_or_else(|e| {
-            eprintln!("Failed to set UDP redirection rule: {}", e);
-        });
+        .expect("Failed to set rules with nft");
 }
 
-async fn teardown_firewall(access_port: &str, listener_port: &str) {
-    // TODO: update to handle removing rules by their handles, rather than flushing all rules.
-    let flush_cmd = vec!["flush", "chain", "ip", "nat", "prerouting"];
-
-    if let Err(e) = run_command("nft", &flush_cmd).await {
-        eprintln!("Failed to flush nftables chain: {}", e);
-    }
-}
-
-async fn setup_firewall_legacy(access_port: &str, listener_port: &str) {
-    // iptables -t nat -A PREROUTING -p tcp --dport 22 -j ACCEPT
-    // iptables -t nat -A PREROUTING -p tcp -m multiport --dports 1:65535 -j DNAT --to-destination :2000
-    let access_port = format!(":{}", access_port);
-    let listener_port = format!(":{}", listener_port);
-
-    let anti_lockout_args = vec![
-        "-t",
-        "nat",
-        "-A",
-        "PREROUTING",
-        "-p",
-        "tcp",
-        "--dport",
-        &access_port,
-        "-j",
-        "ACCEPT",
+async fn teardown_nft_rules() {
+    let cleanup_commands = [
+        "flush ruleset",
+        "delete table ip nat",
+        "delete table ip filter",
     ];
 
-    let tcp_redirection_args = vec![
-        "-t",
-        "nat",
-        "-A",
-        "PREROUTING",
-        "-p",
-        "tcp",
-        "-m",
-        "multiport",
-        "--dports",
-        "1:65535",
-        "-j",
-        "NAT",
-        "--to-destination",
-        &listener_port,
-    ];
-
-    // Execute the iptables commands with output handling
-    if let Err(e) = run_command("iptables", &anti_lockout_args).await {
-        eprintln!("Failed to set iptables anti-lockout rule: {}", e);
-    }
-
-    if let Err(e) = run_command("iptables", &tcp_redirection_args).await {
-        eprintln!("Failed to set iptables TCP redirection rule: {}", e);
-    }
-
-    // Modify the arguments for UDP redirection
-    let mut udp_redirection_args = tcp_redirection_args.clone();
-    udp_redirection_args[5] = "udp"; // Change protocol to UDP
-
-    if let Err(e) = run_command("iptables", &udp_redirection_args).await {
-        eprintln!("Failed to set iptables UDP redirection rule: {}", e);
-    }
-}
-
-async fn teardown_firewall_legacy(access_port: &str, listener_port: &str) {
-    // iptables -t nat -D PREROUTING -p tcp --dport 22 -j ACCEPT && iptables -t nat -D PREROUTING -p tcp -m multiport --dports 1:65535 -j DNAT --to-destination :5555
-    let anti_lockout_args = vec![
-        "-t",
-        "nat",
-        "-D",
-        "PREROUTING",
-        "-p",
-        "tcp",
-        "--dport",
-        access_port,
-        "-j",
-        "ACCEPT",
-    ];
-
-    let tcp_redirection_args = vec![
-        "-t",
-        "nat",
-        "-D",
-        "PREROUTING",
-        "-p",
-        "tcp",
-        "-m",
-        "multiport",
-        "--dports",
-        "1:65535",
-        "-j",
-        "NAT",
-        "--to-destination",
-        &listener_port,
-    ];
-
-    // Avoid redirecting our access port such as 22 to the listener so we can still get into the
-    // listener host.
-    let mut args_clone = anti_lockout_args.clone();
-    args_clone[7] = access_port;
-    let output = Command::new("iptables")
-        .args(&args_clone)
-        .output()
-        .await
-        .expect("Failed to delete iptables rule");
-
-    if !output.status.success() {
-        eprintln!("Failed to remove iptables rule");
-    }
-
-    // Redirect all other TCP ports to the listener
-    let output = Command::new("iptables")
-        .args(&tcp_redirection_args)
-        .output()
-        .await
-        .expect("Failed to delete TCP redirection rule");
-
-    if !output.status.success() {
-        eprintln!("Failed to remove iptables rule for TCP redirection");
-    }
-
-    // Redirect all UDP ports to the UDP listener
-    let mut args_clone = tcp_redirection_args.clone();
-    args_clone[5] = "udp";
-    let output = Command::new("iptables")
-        .args(&args_clone)
-        .output()
-        .await
-        .expect("Failed to delete UDP redirection rule");
-
-    if !output.status.success() {
-        eprintln!("Failed to remove iptables rule for UDP redirection");
+    for cmd in &cleanup_commands {
+        if let Err(e) = run_command("nft", &[cmd], None).await {
+            eprintln!("Failed to remove nft rules: {}, {}", cmd, e);
+        }
     }
 }
 
@@ -488,7 +327,7 @@ async fn run_listener(address: String, access_port: String, port: String) {
         .expect(&format!("Invalid listener address specified {}", address));
 
     // Establish IP tables rules
-    setup_firewall(
+    setup_nft_rules(
         access_port.to_string().clone().as_str(),
         port.to_string().clone().as_str(),
     )
@@ -525,7 +364,7 @@ async fn run_listener(address: String, access_port: String, port: String) {
         _ = udp_task => {},
         _ = ctrl_c() => {
             println!("Shutting down... Cleaning up iptable rules");
-            teardown_firewall(access_port.to_string().as_str(), port.to_string().as_str()).await;
+            teardown_nft_rules().await;
         },
     }
 }
