@@ -23,11 +23,24 @@ jobs:
     strategy:
       matrix:
         include:
-          - target: x86_64-unknown-linux-gnu
+          - target: x86_64_unknown-linux-musl
             os: ubuntu-latest
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+          override: true
+
+      - name: Install deps for musl build
+        if: matrix.target == 'x86_64_unknown-linux-musl'
+        run: |
+          sudo apt update
+          sudo apt install musl-tools -y
+          rustup target add x86_64-unknown-linux-musl
+
       - uses: taiki-e/upload-rust-binary-action@v1
         with:
           # (required) Comma-separated list of binary names (non-extension portion of filename) to build and upload.
