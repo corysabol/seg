@@ -6,5 +6,7 @@ edition = "2021"
 [dependencies]
 chrono = "0.4.38"
 clap = { version = "4.5.20", features = ["derive"] }
+nftables = "0.4.1"
 tempfile = "3.13.0"
 tokio = { version = "1.40.0", features = ["full"] }
+windows = "0.58.0"
