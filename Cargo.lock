@@ -472,6 +472,7 @@ dependencies = [
  "chrono",
  "clap",
  "nftables",
+ "socket2",
  "tempfile",
  "tokio",
  "windows",
