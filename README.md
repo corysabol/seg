@@ -18,7 +18,7 @@ It offers two modes; `seg scan`, and `seg listen`.
 See the [Future Development](#-future-development) section for a list of planned features.
 
 ## Scan mode
-In scan mode seg will accept input from a file which contains a list of network tags (strings which identify the network to the user) followed by a listener IP address.
+In scan mode seg will accept input from a file which contains a list of network tags (strings which identify the network to the user) followed by a listener IP address. See [Target Specification](#target-specification).
 The tool will then leverage nmap or a pure rust in-built scanner depending on the supplied options to scan all ports for each listener supplied. This can be done for UDP and TCP.
 
 ## Listen mode
