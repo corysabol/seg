@@ -38,7 +38,7 @@ Aside from using the provided docker image with `docker pull 84d93r/seg` you can
 ```
 Run in listener mode
 
-Usage: seg.exe listen [OPTIONS]
+Usage: seg listen [OPTIONS]
 
 Options:
       --emit-rules
@@ -62,7 +62,7 @@ ult: both] [possible values: tcp, udp, both]
 ```
 Run in scanner mode
 
-Usage: seg.exe scan [OPTIONS] --input-file <INPUT_FILE>
+Usage: seg scan [OPTIONS] --input-file <INPUT_FILE>
 
 Options:
   -i, --input-file <INPUT_FILE>  Path to the file containing lines of network-na
