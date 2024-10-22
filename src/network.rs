@@ -2,21 +2,20 @@ use crate::consts::*;
 use crate::firewall::*;
 use crate::util::*;
 
-use socket2::{Domain, Protocol, Socket, Type};
 use std::net::IpAddr;
-use std::net::Ipv4Addr;
 use std::net::SocketAddr;
 use std::process::Stdio;
 use std::sync::Arc;
+use std::time::Duration;
 use std::vec;
 use tokio::fs::OpenOptions;
 use tokio::io::{AsyncBufReadExt, BufReader, BufWriter};
-use tokio::net::TcpStream;
-use tokio::net::{TcpListener, UdpSocket};
+use tokio::net::{TcpListener, TcpStream, UdpSocket};
 use tokio::process::Command;
 use tokio::signal::ctrl_c;
 use tokio::sync::Semaphore;
 use tokio::task;
+use tokio::time::timeout;
 
 #[derive(Clone, clap::ValueEnum)]
 pub enum ScanProtocol {
@@ -38,33 +37,110 @@ enum ScannerSocketIpv4 {
 }
 
 struct Scanner {
-    host: Ipv4Addr,
-    task_limit: u8,
-    upper: u16,
-    lower: u16,
+    target: String,
+    semaphore: Arc<Semaphore>,
+    timeout_duration: Duration,
 }
 
 impl Scanner {
-    fn new(host: Ipv4Addr, task_limit: u8, upper: u16, lower: u16) -> Self {
+    fn new(target: String, timeout_duration: Duration) -> Self {
         Self {
-            host,
-            task_limit,
-            upper,
-            lower,
+            target,
+            semaphore: Arc::new(Semaphore::new(MAX_SOCKETS.into())),
+            timeout_duration,
         }
     }
 
-    async fn scan_ports(&self) {
-        // Bucket the ports into tasks based on the concurrency_limit
-        let port_count = self.upper - self.lower;
-        let bucket_size = port_count / self.task_limit as u16;
-        // let buckets = vec![];
+    async fn scan_ports(&self, lower_port: u16, upper_port: u16) {
+        let mut tcp_handles = vec![];
+        let mut udp_handles = vec![];
 
-        for t in 0..self.task_limit {}
+        for port in lower_port..=upper_port {
+            // TCP
+            let semaphore = self.semaphore.clone();
+            let target = self.target.clone();
+            let timeout_duration = self.timeout_duration.clone();
+            let tcp_handle = tokio::spawn(async move {
+                let scanner = Scanner {
+                    target,
+                    semaphore,
+                    timeout_duration,
+                };
+                scanner.scan_tcp_port(port).await
+            });
+            tcp_handles.push(tcp_handle);
+
+            // UDP
+            let semaphore = self.semaphore.clone();
+            let target = self.target.clone();
+            let timeout_duration = self.timeout_duration.clone();
+            let udp_handle = tokio::spawn(async move {
+                let scanner = Scanner {
+                    target,
+                    semaphore,
+                    timeout_duration,
+                };
+                scanner.scan_udp_port(port).await
+            });
+            udp_handles.push(udp_handle);
+        }
+
+        // Wait for tasks
+        for handle in tcp_handles {
+            let _ = handle.await;
+        }
+        for handle in udp_handles {
+            let _ = handle.await;
+        }
+    }
+
+    async fn scan_udp_port(&self, port: u16) {
+        // This will wait until a permit can be grabbed
+        let _permit = self
+            .semaphore
+            .acquire()
+            .await
+            .expect("Failed to acquire permit");
+        let addr = format!("{}:{}", self.target, port);
+        let addr: SocketAddr = addr
+            .parse()
+            .expect(format!("Failed to parse address {:?}", addr).as_str());
+
+        match timeout(self.timeout_duration, TcpStream::connect(&addr)).await {
+            Ok(Ok(_)) => {
+                println!("tcp/{}/{}", addr, port);
+            }
+            _ => {}
+        }
+    }
+
+    async fn scan_tcp_port(&self, port: u16) {
+        let _permit = self
+            .semaphore
+            .acquire()
+            .await
+            .expect("Failed to acquire permit");
+
+        // TODO: consider UDP socket reuse
+        let socket = UdpSocket::bind("0.0.0.0:0")
+            .await
+            .expect("Failed to bind UDP socket");
+
+        let addr = format!("{}:{}", self.target, port);
+        match socket.connect(addr.clone()).await {
+            Ok(_) => {
+                // Send probe
+                match socket.send(&[0; 1]).await {
+                    Ok(_) => println!("udp/{}/{}", addr, port),
+                    Err(_) => {}
+                }
+            }
+            Err(_) => {}
+        };
     }
 }
 
-pub async fn run_scan(input_file: String, scan_type: Protocol) {
+pub async fn run_scan(input_file: String, scan_type: ScanProtocol) {
     let file = tokio::fs::File::open(&input_file)
         .await
         .expect("Unable to open input file.");
@@ -89,13 +165,6 @@ pub async fn run_scan(input_file: String, scan_type: Protocol) {
 
         scan_nmap(&listener_ip, &format!("scan_{}", network_name), scan_type).await;
     }
-}
-
-pub async fn scan(input_file: String, scan_type: Protocol) {
-    let file = tokio::fs::File::open(&input_file)
-        .await
-        .expect("Unable to open input file");
-    let reader = tokio::io::BufReader::new(file);
 }
 
 pub async fn scan_nmap(listener_ip: &str, output_file: &str, scan_type: ScanProtocol) {

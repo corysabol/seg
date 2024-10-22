@@ -26,7 +26,7 @@ enum Commands {
         #[arg(short, long)]
         input_file: String,
         #[arg(short, long, value_enum, default_value = "both")]
-        scan_type: Protocol,
+        scan_type: ScanProtocol,
     },
     /// Run in listener mode
     Listen {
@@ -38,7 +38,7 @@ enum Commands {
         rules: Option<String>,
         /// The protocol to listen for connection over. NOT YET IMPLEMENTED!
         #[arg(long, value_enum, default_value = "both")]
-        protocol: Protocol,
+        protocol: ScanProtocol,
         #[arg(short, long, default_value = "0.0.0.0")]
         listen_address: String,
         /// Port used to access the host (typicall 22 for ssh)
