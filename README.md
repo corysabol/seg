@@ -46,8 +46,7 @@ Options:
       --rules <RULES>
           An optional rules file to use
       --protocol <PROTOCOL>
-          The protocol to listen for connection over. NOT YET IMPLEMENTED! [defa
-ult: both] [possible values: tcp, udp, both]
+          The protocol to listen for connection over. NOT YET IMPLEMENTED! [default: both] [possible values: tcp, udp, both]
   -l, --listen-address <LISTEN_ADDRESS>
           [default: 0.0.0.0]
   -a, --access-port <ACCESS_PORT>
@@ -67,8 +66,7 @@ Usage: seg scan [OPTIONS] --input-file <INPUT_FILE>
 Options:
   -i, --input-file <INPUT_FILE>  Path to the file containing lines of network-na
 me,listener-ip
-  -s, --scan-type <SCAN_TYPE>    [default: both] [possible values: tcp, udp, bot
-h]
+  -s, --scan-type <SCAN_TYPE>    [default: both] [possible values: tcp, udp, both]
   -h, --help                     Print help
 ```
 
