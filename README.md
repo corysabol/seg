@@ -31,8 +31,16 @@ See the [usage](#usage) section below, or the [examples](#examples) section for 
 ## Installation
 
 Aside from using the provided docker image with `docker pull 84d93r/seg` you can find prebuilt binaries under [releases](https://github.com/corysabol/seg/releases).
+`seg` currently depends upon `nmap` for scanning and `nftables` for listening. You may need to install these on your systems. For example on Ubuntu linux:
+
+```
+sudo apt update && sudo apt install -y nmap nftables iptables-nftables-compat
+sudo systemctl enable nftables.service
+```
 
 ## Usage
+
+`seg` needs to be ran as `root` using `sudo` or by switching to the `root` user.
 
 ### Listen mode
 ```
