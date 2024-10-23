@@ -1,6 +1,7 @@
 use clap::{Parser, Subcommand};
 
 mod consts;
+mod data;
 mod firewall;
 mod network;
 mod util;
@@ -36,6 +37,9 @@ enum Commands {
         /// An optional rules file to use
         #[arg(long)]
         rules: Option<String>,
+        /// The name of the network the listener is on
+        #[arg(long)]
+        network_tag: String,
         /// The protocol to listen for connection over. NOT YET IMPLEMENTED!
         #[arg(long, value_enum, default_value = "both")]
         protocol: ScanProtocol,
@@ -64,6 +68,7 @@ async fn main() {
         Commands::Listen {
             emit_rules,
             rules,
+            network_tag,
             protocol: _,
             listen_address,
             access_port,
@@ -84,6 +89,7 @@ async fn main() {
                 listen_address.clone(),
                 access_port.clone(),
                 port.clone(),
+                network_tag.clone(),
             )
             .await;
         }
