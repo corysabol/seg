@@ -1,4 +1,5 @@
 use crate::consts::*;
+use crate::data::*;
 use crate::firewall::*;
 use crate::util::*;
 
@@ -249,6 +250,7 @@ pub async fn run_listener(
     address: String,
     access_port: String,
     port: String,
+    network_tag: String,
 ) {
     let access_port: u16 = access_port
         .parse()
@@ -292,8 +294,8 @@ pub async fn run_listener(
         .expect("Unable to bind UDP listener");
 
     // Create tokio tasks
-    let tcp_task = handle_tcp(tcp_listener, log_writer.clone());
-    let udp_task = handle_udp(udp_listener, log_writer.clone());
+    let tcp_task = handle_tcp(tcp_listener, log_writer.clone(), network_tag.clone());
+    let udp_task = handle_udp(udp_listener, log_writer.clone(), network_tag.clone());
 
     tokio::select! {
         _ = tcp_task => {},
@@ -308,6 +310,7 @@ pub async fn run_listener(
 pub async fn handle_tcp(
     tcp_listener: TcpListener,
     log_writer: Arc<tokio::sync::Mutex<BufWriter<tokio::fs::File>>>,
+    network_tag: String,
 ) {
     println!(
         "Listening for TCP connections on {:?}",
@@ -315,13 +318,28 @@ pub async fn handle_tcp(
             .local_addr()
             .expect("Failed to get local addr of TCP listener")
     );
+
     loop {
         match tcp_listener.accept().await {
             Ok((_socket, addr)) => {
                 let time = chrono::Utc::now();
-                let log_entry = format!("{}/tcp_connect/{:?}\n", time, addr);
-                println!("{}", log_entry);
-                write_to_log(log_writer.clone(), log_entry).await;
+                let connection = Connection {
+                    listener_ip: tcp_listener
+                        .local_addr()
+                        .unwrap()
+                        .ip()
+                        .to_string()
+                        .parse()
+                        .unwrap(),
+                    network_tag: network_tag.clone(),
+                    source_ip: addr.ip().to_string().parse().unwrap(),
+                    source_port: addr.port(),
+                    target_port: tcp_listener.local_addr().unwrap().port(),
+                    protocol: "tcp".to_string(),
+                    timestamp: time,
+                };
+                println!("New connection {:?}", connection);
+                write_connection_to_log(log_writer.clone(), &connection).await;
             }
             Err(e) => {
                 eprintln!("Failed to accept TCP connection on port {}", e);
@@ -333,6 +351,7 @@ pub async fn handle_tcp(
 pub async fn handle_udp(
     udp_socket: UdpSocket,
     log_writer: Arc<tokio::sync::Mutex<BufWriter<tokio::fs::File>>>,
+    network_tag: String,
 ) {
     let mut buf = [0; 1024];
     println!(
@@ -345,9 +364,23 @@ pub async fn handle_udp(
         match udp_socket.recv_from(&mut buf).await {
             Ok((_amt, src)) => {
                 let time = chrono::Utc::now();
-                let log_entry = format!("{:?}/udp_connect/{:?}\n", time, src);
-                println!("{}", log_entry);
-                write_to_log(log_writer.clone(), log_entry).await;
+                let connection = Connection {
+                    listener_ip: udp_socket
+                        .local_addr()
+                        .unwrap()
+                        .ip()
+                        .to_string()
+                        .parse()
+                        .unwrap(),
+                    network_tag: network_tag.clone(),
+                    source_ip: src.ip().to_string().parse().unwrap(),
+                    source_port: src.port(),
+                    target_port: 0,
+                    protocol: "udp".to_string(),
+                    timestamp: time,
+                };
+                println!("New connection {:?}", connection);
+                write_connection_to_log(log_writer.clone(), &connection).await;
             }
             Err(e) => {
                 eprintln!("Failed to receive UDP packet on port {}", e);
