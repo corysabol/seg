@@ -3,8 +3,18 @@ use crate::data::*;
 use crate::firewall::*;
 use crate::util::*;
 
-use std::net::IpAddr;
-use std::net::SocketAddr;
+use nix::sys::socket::{
+    getsockopt, 
+    sockopt::Ipv4OrigDstAddr,
+    sockopt::OriginalDst, 
+    recvmsg, 
+    ControlMessageOwned,
+    MsgFlags
+};
+use nix::sys::uio::IoVec;
+use std::os::unix::io::AsRawFd;
+use std::os::unix::io::AsFd;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
@@ -206,7 +216,7 @@ pub async fn scan_nmap(listener_ip: &str, output_file: &str, scan_type: ScanProt
             nmap_args.extend(vec![
                 "-p",
                 "1-65535",
-                "-sS",
+                "-sT",
                 "-sU",
                 listener_ip,
                 "--stats-every",
@@ -307,6 +317,43 @@ pub async fn run_listener(
     }
 }
 
+//unsafe fn recv_original_dst(fd: i32) -> std::io::Result<Option<ControlMessageOwned>> {
+//    let mut buf = [0u8; 1024];
+//    let mut cmsgspace = nix::cmsg_space!([u8; 128]);
+//
+//    let msg = recvmsg(
+//        &fd,
+//        &[IoVec::from_mut_slice(&mut buf)],
+//        Some(&mut cmsgspace),
+//        MsgFlags::empty(),
+//    ).unwrap();
+//
+//    Ok(msg.cmsgs().next())
+//
+//}
+//
+//pub fn get_original_dst_udp(socket: &tokio::net::UdpSocket) -> std::io::Result<SocketAddr> {
+//    let fd = socket.as_fd();
+//    let result = unsafe { recv_original_dst(fd).unwrap() };
+//
+//    if let Some(ControlMessageOwned::Ipv4OrigDstAddr(add)) = result {
+//        let ip = std::net::Ipv4Addr::from(u32::from_be(addr.sin_addr.s_addr));
+//        let port = u16::from_be(addr.sin_port);
+//        return Ok(Some(std::net::SocketAddr::new(ip.into(), port)));
+//    }
+//
+//    Ok(None)
+//}
+
+pub fn get_original_dst_tcp(socket: &TcpStream) -> std::io::Result<SocketAddr> {
+    let fd = socket.as_fd();
+    let orig_dst = getsockopt(&fd, OriginalDst).unwrap();
+    let ip = Ipv4Addr::from(u32::from_be(orig_dst.sin_addr.s_addr));
+    let port = u16::from_be(orig_dst.sin_port);
+
+    Ok(SocketAddr::new(ip.into(), port))
+}
+
 pub async fn handle_tcp(
     tcp_listener: TcpListener,
     log_writer: Arc<tokio::sync::Mutex<BufWriter<tokio::fs::File>>>,
@@ -321,24 +368,21 @@ pub async fn handle_tcp(
 
     loop {
         match tcp_listener.accept().await {
-            Ok((_socket, addr)) => {
+            Ok((socket, addr)) => {
                 let time = chrono::Utc::now();
+
+                // We need to extract the true target ip and port from the socket
+                let original_dst = get_original_dst_tcp(&socket).unwrap();
                 let connection = Connection {
-                    listener_ip: tcp_listener
-                        .local_addr()
-                        .unwrap()
-                        .ip()
-                        .to_string()
-                        .parse()
-                        .unwrap(),
+                    listener_ip: original_dst.ip().to_string().parse().unwrap(),
                     network_tag: network_tag.clone(),
                     source_ip: addr.ip().to_string().parse().unwrap(),
                     source_port: addr.port(),
-                    target_port: tcp_listener.local_addr().unwrap().port(),
+                    target_port: original_dst.port(),
                     protocol: "tcp".to_string(),
                     timestamp: time,
                 };
-                println!("New connection {:?}", connection);
+                println!("{:?}", connection);
                 write_connection_to_log(log_writer.clone(), &connection).await;
             }
             Err(e) => {
@@ -364,22 +408,17 @@ pub async fn handle_udp(
         match udp_socket.recv_from(&mut buf).await {
             Ok((_amt, src)) => {
                 let time = chrono::Utc::now();
+                let original_dst = get_original_dst_udp(&udp_socket).unwrap();
                 let connection = Connection {
-                    listener_ip: udp_socket
-                        .local_addr()
-                        .unwrap()
-                        .ip()
-                        .to_string()
-                        .parse()
-                        .unwrap(),
+                    listener_ip: original_dst.ip().to_string().parse().unwrap(),
                     network_tag: network_tag.clone(),
                     source_ip: src.ip().to_string().parse().unwrap(),
                     source_port: src.port(),
-                    target_port: 0,
+                    target_port: original_dst.port(),
                     protocol: "udp".to_string(),
                     timestamp: time,
                 };
-                println!("New connection {:?}", connection);
+                println!("{:?}", connection);
                 write_connection_to_log(log_writer.clone(), &connection).await;
             }
             Err(e) => {

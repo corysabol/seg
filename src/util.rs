@@ -57,6 +57,7 @@ pub async fn write_connection_to_log(
 
     let mut writer = log_writer.lock().await;
     writer.write_all(json.as_bytes()).await.unwrap();
+    writer.write_all("\n".as_bytes()).await.unwrap();
     writer.flush().await.unwrap();
 }
 

@@ -40,7 +40,7 @@ enum Commands {
         /// The name of the network the listener is on
         #[arg(long)]
         network_tag: String,
-        /// The protocol to listen for connection over. NOT YET IMPLEMENTED!
+        /// The protocol to listen for connection over.
         #[arg(long, value_enum, default_value = "both")]
         protocol: ScanProtocol,
         #[arg(short, long, default_value = "0.0.0.0")]
@@ -69,7 +69,7 @@ async fn main() {
             emit_rules,
             rules,
             network_tag,
-            protocol: _,
+            protocol,
             listen_address,
             access_port,
             port,
