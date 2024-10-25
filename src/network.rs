@@ -5,14 +5,8 @@ use crate::util::*;
 
 use nix::sys::socket::{
     getsockopt, 
-    sockopt::Ipv4OrigDstAddr,
     sockopt::OriginalDst, 
-    recvmsg, 
-    ControlMessageOwned,
-    MsgFlags
 };
-use nix::sys::uio::IoVec;
-use std::os::unix::io::AsRawFd;
 use std::os::unix::io::AsFd;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::process::Stdio;
@@ -25,7 +19,6 @@ use tokio::net::{TcpListener, TcpStream, UdpSocket};
 use tokio::process::Command;
 use tokio::signal::ctrl_c;
 use tokio::sync::Semaphore;
-use tokio::task;
 use tokio::time::timeout;
 
 #[derive(Clone, clap::ValueEnum)]
@@ -299,7 +292,12 @@ pub async fn run_listener(
     let tcp_listener = TcpListener::bind((addr, port))
         .await
         .expect("Unable to bind TCP listener");
-    let udp_listener = UdpSocket::bind((addr, port))
+
+    // Just bind udp listener to 0.0.0.0:0 since we don't need nftables rule
+    // to listen on every port for UDP packets.
+    let udp_addr: IpAddr = "0.0.0.0".parse().unwrap();
+    let udp_port: u16 = 0;
+    let udp_listener = UdpSocket::bind((udp_addr, udp_port))
         .await
         .expect("Unable to bind UDP listener");
 
@@ -316,34 +314,6 @@ pub async fn run_listener(
         },
     }
 }
-
-//unsafe fn recv_original_dst(fd: i32) -> std::io::Result<Option<ControlMessageOwned>> {
-//    let mut buf = [0u8; 1024];
-//    let mut cmsgspace = nix::cmsg_space!([u8; 128]);
-//
-//    let msg = recvmsg(
-//        &fd,
-//        &[IoVec::from_mut_slice(&mut buf)],
-//        Some(&mut cmsgspace),
-//        MsgFlags::empty(),
-//    ).unwrap();
-//
-//    Ok(msg.cmsgs().next())
-//
-//}
-//
-//pub fn get_original_dst_udp(socket: &tokio::net::UdpSocket) -> std::io::Result<SocketAddr> {
-//    let fd = socket.as_fd();
-//    let result = unsafe { recv_original_dst(fd).unwrap() };
-//
-//    if let Some(ControlMessageOwned::Ipv4OrigDstAddr(add)) = result {
-//        let ip = std::net::Ipv4Addr::from(u32::from_be(addr.sin_addr.s_addr));
-//        let port = u16::from_be(addr.sin_port);
-//        return Ok(Some(std::net::SocketAddr::new(ip.into(), port)));
-//    }
-//
-//    Ok(None)
-//}
 
 pub fn get_original_dst_tcp(socket: &TcpStream) -> std::io::Result<SocketAddr> {
     let fd = socket.as_fd();
@@ -408,13 +378,13 @@ pub async fn handle_udp(
         match udp_socket.recv_from(&mut buf).await {
             Ok((_amt, src)) => {
                 let time = chrono::Utc::now();
-                let original_dst = get_original_dst_udp(&udp_socket).unwrap();
+                let dest = udp_socket.local_addr().unwrap();
                 let connection = Connection {
-                    listener_ip: original_dst.ip().to_string().parse().unwrap(),
+                    listener_ip: dest.ip().to_string().parse().unwrap(),
                     network_tag: network_tag.clone(),
                     source_ip: src.ip().to_string().parse().unwrap(),
                     source_port: src.port(),
-                    target_port: original_dst.port(),
+                    target_port: dest.port(),
                     protocol: "udp".to_string(),
                     timestamp: time,
                 };

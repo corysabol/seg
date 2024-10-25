@@ -6,8 +6,6 @@ table ip nat {
         # avoid locking ourselves out by not forwarding the access port
         tcp dport {access_port} counter accept
         tcp dport != {listener_port} counter redirect to :{listener_port}
-        udp dport != {listener_port} counter redirect to :{listener_port}
-
     }
 }
 
@@ -17,6 +15,5 @@ table ip filter {
         # Always accept listener port traffic
         tcp dport {access_port} counter accept
         tcp dport != {access_port} counter accept
-        udp dport 1-65535 counter accept
     }
 }
