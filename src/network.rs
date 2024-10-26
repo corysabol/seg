@@ -3,12 +3,18 @@ use crate::data::*;
 use crate::firewall::*;
 use crate::util::*;
 
-use nix::sys::socket::{
-    getsockopt, 
-    sockopt::OriginalDst, 
-};
-use std::os::unix::io::AsFd;
+use pnet::datalink::{self, NetworkInterface};
+
+use pnet::packet::ethernet::{EtherTypes, EthernetPacket, MutableEthernetPacket};
+use pnet::packet::ip::{IpNextHeaderProtocol, IpNextHeaderProtocols};
+use pnet::packet::ipv4::Ipv4Packet;
+use pnet::packet::tcp::TcpPacket;
+use pnet::packet::udp::UdpPacket;
+use pnet::packet::Packet;
+
+use std::io::IoSliceMut;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::os::unix::io::{AsFd, AsRawFd};
 use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
@@ -26,13 +32,6 @@ pub enum ScanProtocol {
     TCP,
     UDP,
     BOTH,
-}
-
-pub enum ScanType {
-    TCP_SYN,
-    TCP_FULL,
-    TCP_ACK,
-    ICMP,
 }
 
 enum ScannerSocketIpv4 {
@@ -249,30 +248,15 @@ pub async fn scan_nmap(listener_ip: &str, output_file: &str, scan_type: ScanProt
 }
 
 pub async fn run_listener(
-    rules: Option<String>,
-    address: String,
     access_port: String,
-    port: String,
+    interface_name: String,
     network_tag: String,
+    protocol: ScanProtocol,
 ) {
+    println!("{}", access_port);
     let access_port: u16 = access_port
         .parse()
-        .expect(&format!("Error invalid port specification {}", port));
-    let port: u16 = port
-        .parse()
-        .expect(&format!("Error invalid port specification {}", port));
-
-    let address: IpAddr = address
-        .parse()
-        .expect(&format!("Invalid listener address specified {}", address));
-
-    // Establish firewall rules for fowarding packets to the listener port
-    setup_firewall_rules(
-        rules,
-        access_port.to_string().clone().as_str(),
-        port.to_string().clone().as_str(),
-    )
-    .await;
+        .expect(&format!("Error invalid access port specification {}", access_port));
 
     // Open log file and wrap it in a shared buffered writer for performance
     let log_file_path = "connections.log";
@@ -286,28 +270,8 @@ pub async fn run_listener(
     let log_writer = BufWriter::new(log_file);
     let log_writer = Arc::new(tokio::sync::Mutex::new(log_writer));
 
-    // Bind TCP and UDP listeners
-    let addr = address.clone();
-
-    let tcp_listener = TcpListener::bind((addr, port))
-        .await
-        .expect("Unable to bind TCP listener");
-
-    // Just bind udp listener to 0.0.0.0:0 since we don't need nftables rule
-    // to listen on every port for UDP packets.
-    let udp_addr: IpAddr = "0.0.0.0".parse().unwrap();
-    let udp_port: u16 = 0;
-    let udp_listener = UdpSocket::bind((udp_addr, udp_port))
-        .await
-        .expect("Unable to bind UDP listener");
-
-    // Create tokio tasks
-    let tcp_task = handle_tcp(tcp_listener, log_writer.clone(), network_tag.clone());
-    let udp_task = handle_udp(udp_listener, log_writer.clone(), network_tag.clone());
-
     tokio::select! {
-        _ = tcp_task => {},
-        _ = udp_task => {},
+        _ = handle_packet_log(interface_name, access_port, protocol, log_writer) => {}
         _ = ctrl_c() => {
             println!("Shutting down... Cleaning up iptable rules");
             teardown_firewall_rules().await;
@@ -315,85 +279,71 @@ pub async fn run_listener(
     }
 }
 
-pub fn get_original_dst_tcp(socket: &TcpStream) -> std::io::Result<SocketAddr> {
-    let fd = socket.as_fd();
-    let orig_dst = getsockopt(&fd, OriginalDst).unwrap();
-    let ip = Ipv4Addr::from(u32::from_be(orig_dst.sin_addr.s_addr));
-    let port = u16::from_be(orig_dst.sin_port);
-
-    Ok(SocketAddr::new(ip.into(), port))
-}
-
-pub async fn handle_tcp(
-    tcp_listener: TcpListener,
+pub async fn handle_packet_log(
+    interface_name: String,
+    access_port: u16,
+    protocol: ScanProtocol,
     log_writer: Arc<tokio::sync::Mutex<BufWriter<tokio::fs::File>>>,
-    network_tag: String,
 ) {
-    println!(
-        "Listening for TCP connections on {:?}",
-        tcp_listener
-            .local_addr()
-            .expect("Failed to get local addr of TCP listener")
-    );
+    use pnet::datalink::Channel::Ethernet;
+
+    // Find interfaces
+    let interfaces = datalink::interfaces();
+    let interface = interfaces
+        .into_iter()
+        .find(|iface: &NetworkInterface| {
+            iface.is_up()
+                && !iface.is_loopback()
+                && iface.ips.len() > 0
+                && iface.name == interface_name
+        })
+        .expect("Could not find interface");
+
+    // Create a channel to receive on
+    let (_, mut rx) = match datalink::channel(&interface, Default::default()) {
+        Ok(Ethernet(tx, rx)) => (tx, rx),
+        Ok(_) => todo!(),
+        Err(_) => todo!(),
+    };
 
     loop {
-        match tcp_listener.accept().await {
-            Ok((socket, addr)) => {
-                let time = chrono::Utc::now();
-
-                // We need to extract the true target ip and port from the socket
-                let original_dst = get_original_dst_tcp(&socket).unwrap();
-                let connection = Connection {
-                    listener_ip: original_dst.ip().to_string().parse().unwrap(),
-                    network_tag: network_tag.clone(),
-                    source_ip: addr.ip().to_string().parse().unwrap(),
-                    source_port: addr.port(),
-                    target_port: original_dst.port(),
-                    protocol: "tcp".to_string(),
-                    timestamp: time,
-                };
-                println!("{:?}", connection);
-                write_connection_to_log(log_writer.clone(), &connection).await;
+        match rx.next() {
+            Ok(packet) => {
+                if let Some(ethernet) = EthernetPacket::new(packet) {
+                    // Handle IPv4 packets
+                    if let Some(ip_packet) = Ipv4Packet::new(ethernet.payload()) {
+                        match ip_packet.get_next_level_protocol() {
+                            IpNextHeaderProtocols::Udp => {
+                                if let Some(udp_packet) = UdpPacket::new(ip_packet.payload()) {
+                                    println!(
+                                        "UDP: {}:{} -> {}:{}",
+                                        ip_packet.get_source(),
+                                        udp_packet.get_source(),
+                                        ip_packet.get_destination(),
+                                        udp_packet.get_destination(),
+                                    );
+                                }
+                            }
+                            IpNextHeaderProtocols::Tcp => {
+                                if let Some(tcp_packet) = TcpPacket::new(ip_packet.payload()) {
+                                    let destination_port = tcp_packet.get_destination();
+                                    if destination_port != access_port {
+                                        println!(
+                                            "TCP: {}:{} -> {}:{}",
+                                            ip_packet.get_source(),
+                                            tcp_packet.get_source(),
+                                            ip_packet.get_destination(),
+                                            tcp_packet.get_destination(),
+                                        );
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
             }
-            Err(e) => {
-                eprintln!("Failed to accept TCP connection on port {}", e);
-            }
-        }
-    }
-}
-
-pub async fn handle_udp(
-    udp_socket: UdpSocket,
-    log_writer: Arc<tokio::sync::Mutex<BufWriter<tokio::fs::File>>>,
-    network_tag: String,
-) {
-    let mut buf = [0; 1024];
-    println!(
-        "Listening for UDP connections on {:?}",
-        udp_socket
-            .local_addr()
-            .expect("Failed to get local addr of UDP listener")
-    );
-    loop {
-        match udp_socket.recv_from(&mut buf).await {
-            Ok((_amt, src)) => {
-                let time = chrono::Utc::now();
-                let dest = udp_socket.local_addr().unwrap();
-                let connection = Connection {
-                    listener_ip: dest.ip().to_string().parse().unwrap(),
-                    network_tag: network_tag.clone(),
-                    source_ip: src.ip().to_string().parse().unwrap(),
-                    source_port: src.port(),
-                    target_port: dest.port(),
-                    protocol: "udp".to_string(),
-                    timestamp: time,
-                };
-                println!("{:?}", connection);
-                write_connection_to_log(log_writer.clone(), &connection).await;
-            }
-            Err(e) => {
-                eprintln!("Failed to receive UDP packet on port {}", e);
-            }
+            Err(_) => {}
         }
     }
 }

@@ -35,22 +35,17 @@ enum Commands {
         #[arg(long, action = clap::ArgAction::SetTrue)]
         emit_rules: bool,
         /// An optional rules file to use
-        #[arg(long)]
-        rules: Option<String>,
-        /// The name of the network the listener is on
-        #[arg(long)]
+        #[arg(long, short)]
         network_tag: String,
+        /// The interface to listen on
+        #[arg(long, short)]
+        interface_name: String,
         /// The protocol to listen for connection over.
         #[arg(long, value_enum, default_value = "both")]
         protocol: ScanProtocol,
-        #[arg(short, long, default_value = "0.0.0.0")]
-        listen_address: String,
         /// Port used to access the host (typicall 22 for ssh)
         #[arg(short, long, default_value = "22")]
         access_port: String,
-        /// Port to listen on for both TCP and UDP
-        #[arg(short, long, default_value = "5555")]
-        port: String,
     },
 }
 
@@ -67,12 +62,10 @@ async fn main() {
         }
         Commands::Listen {
             emit_rules,
-            rules,
             network_tag,
+            interface_name,
             protocol,
-            listen_address,
             access_port,
-            port,
         } => {
             if *emit_rules {
                 // Emit the rules file and exit
@@ -80,18 +73,15 @@ async fn main() {
                     "{}",
                     NFT_RULES_TEMPLATE
                         .replace("{access_port}", access_port)
-                        .replace("{listener_port}", port)
                 );
                 std::process::exit(0);
             }
             run_listener(
-                rules.clone(),
-                listen_address.clone(),
                 access_port.clone(),
-                port.clone(),
+                interface_name.clone(), 
                 network_tag.clone(),
-            )
-            .await;
+                protocol
+            ).await;
         }
     }
 }
