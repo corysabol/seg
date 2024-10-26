@@ -31,10 +31,7 @@ enum Commands {
     },
     /// Run in listener mode
     Listen {
-        /// Emits the base rules template for customization.
-        #[arg(long, action = clap::ArgAction::SetTrue)]
-        emit_rules: bool,
-        /// An optional rules file to use
+        /// The name / tag of the network
         #[arg(long, short)]
         network_tag: String,
         /// The interface to listen on
@@ -61,27 +58,18 @@ async fn main() {
             run_scan(input_file.to_string(), scan_type.clone()).await;
         }
         Commands::Listen {
-            emit_rules,
             network_tag,
             interface_name,
             protocol,
             access_port,
         } => {
-            if *emit_rules {
-                // Emit the rules file and exit
-                println!(
-                    "{}",
-                    NFT_RULES_TEMPLATE
-                        .replace("{access_port}", access_port)
-                );
-                std::process::exit(0);
-            }
             run_listener(
                 access_port.clone(),
-                interface_name.clone(), 
+                interface_name.clone(),
                 network_tag.clone(),
-                protocol
-            ).await;
+                protocol.clone(),
+            )
+            .await;
         }
     }
 }

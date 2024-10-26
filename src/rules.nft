@@ -1,15 +1,5 @@
 flush ruleset
 
-table ip nat {
-    chain prerouting {
-        type nat hook prerouting priority 0;
-        # avoid locking ourselves out by not forwarding the access port
-        tcp dport {access_port} counter accept
-        tcp dport != {listener_port} counter redirect to :{listener_port}
-	udp dport != {listener_port} counter dnat to :{listener_port}
-    }
-}
-
 table ip filter {
     chain input {
         type filter hook input priority 0; policy accept;

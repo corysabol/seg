@@ -4,16 +4,10 @@ mod platform {
     use crate::util::*;
     use std::io::Write;
 
-    pub async fn setup_firewall_rules(
-        rules: Option<String>,
-        access_port: &str,
-        listener_port: &str,
-    ) {
+    pub async fn setup_firewall_rules(rules: Option<String>, access_port: &str) {
         let nft_rules = match rules {
             Some(rules) => rules,
-            None => NFT_RULES_TEMPLATE
-                .replace("{access_port}", access_port)
-                .replace("{listener_port}", listener_port),
+            None => NFT_RULES_TEMPLATE.replace("{access_port}", access_port),
         };
 
         println!("Setting up firewall rules with nft:\n{}", nft_rules);

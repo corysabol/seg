@@ -12,9 +12,7 @@ use pnet::packet::tcp::TcpPacket;
 use pnet::packet::udp::UdpPacket;
 use pnet::packet::Packet;
 
-use std::io::IoSliceMut;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::os::unix::io::{AsFd, AsRawFd};
 use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
@@ -254,9 +252,10 @@ pub async fn run_listener(
     protocol: ScanProtocol,
 ) {
     println!("{}", access_port);
-    let access_port: u16 = access_port
-        .parse()
-        .expect(&format!("Error invalid access port specification {}", access_port));
+    let port: u16 = access_port.parse().expect(&format!(
+        "Error invalid access port specification {}",
+        access_port
+    ));
 
     // Open log file and wrap it in a shared buffered writer for performance
     let log_file_path = "connections.log";
@@ -270,8 +269,11 @@ pub async fn run_listener(
     let log_writer = BufWriter::new(log_file);
     let log_writer = Arc::new(tokio::sync::Mutex::new(log_writer));
 
+    // Setup rules to accept all ports on UDP and TCP
+    setup_firewall_rules(None, &access_port).await;
+
     tokio::select! {
-        _ = handle_packet_log(interface_name, access_port, protocol, log_writer) => {}
+        _ = handle_packet_log(interface_name, port, protocol, log_writer) => {}
         _ = ctrl_c() => {
             println!("Shutting down... Cleaning up iptable rules");
             teardown_firewall_rules().await;
@@ -315,6 +317,7 @@ pub async fn handle_packet_log(
                         match ip_packet.get_next_level_protocol() {
                             IpNextHeaderProtocols::Udp => {
                                 if let Some(udp_packet) = UdpPacket::new(ip_packet.payload()) {
+                                    println!("{:?}", udp_packet);
                                     println!(
                                         "UDP: {}:{} -> {}:{}",
                                         ip_packet.get_source(),
@@ -326,6 +329,7 @@ pub async fn handle_packet_log(
                             }
                             IpNextHeaderProtocols::Tcp => {
                                 if let Some(tcp_packet) = TcpPacket::new(ip_packet.payload()) {
+                                    println!("{:?}", tcp_packet);
                                     let destination_port = tcp_packet.get_destination();
                                     if destination_port != access_port {
                                         println!(
