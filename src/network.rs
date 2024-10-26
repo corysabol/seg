@@ -8,6 +8,7 @@ use pnet::datalink::{self, NetworkInterface};
 use pnet::packet::ethernet::{EtherTypes, EthernetPacket, MutableEthernetPacket};
 use pnet::packet::ip::{IpNextHeaderProtocol, IpNextHeaderProtocols};
 use pnet::packet::ipv4::Ipv4Packet;
+use pnet::packet::tcp::TcpFlags;
 use pnet::packet::tcp::TcpPacket;
 use pnet::packet::udp::UdpPacket;
 use pnet::packet::Packet;
@@ -273,7 +274,7 @@ pub async fn run_listener(
     setup_firewall_rules(None, &access_port).await;
 
     tokio::select! {
-        _ = handle_packet_log(interface_name, port, protocol, log_writer) => {}
+        _ = handle_packet_log(interface_name, network_tag, port, protocol, log_writer) => {}
         _ = ctrl_c() => {
             println!("Shutting down... Cleaning up iptable rules");
             teardown_firewall_rules().await;
@@ -283,6 +284,7 @@ pub async fn run_listener(
 
 pub async fn handle_packet_log(
     interface_name: String,
+    network_tag: String,
     access_port: u16,
     protocol: ScanProtocol,
     log_writer: Arc<tokio::sync::Mutex<BufWriter<tokio::fs::File>>>,
@@ -301,6 +303,14 @@ pub async fn handle_packet_log(
         })
         .expect("Could not find interface");
 
+    let local_ip = match interface.ips.iter().find(|ip| ip.is_ipv4()) {
+        Some(ip) => match ip.ip() {
+            std::net::IpAddr::V4(ipv4) => ipv4,
+            _ => panic!("Expected an IPv4 address"),
+        },
+        None => panic!("No IPv4 address found on interface"),
+    };
+
     // Create a channel to receive on
     let (_, mut rx) = match datalink::channel(&interface, Default::default()) {
         Ok(Ethernet(tx, rx)) => (tx, rx),
@@ -314,35 +324,81 @@ pub async fn handle_packet_log(
                 if let Some(ethernet) = EthernetPacket::new(packet) {
                     // Handle IPv4 packets
                     if let Some(ip_packet) = Ipv4Packet::new(ethernet.payload()) {
-                        match ip_packet.get_next_level_protocol() {
-                            IpNextHeaderProtocols::Udp => {
-                                if let Some(udp_packet) = UdpPacket::new(ip_packet.payload()) {
-                                    println!("{:?}", udp_packet);
-                                    println!(
-                                        "UDP: {}:{} -> {}:{}",
-                                        ip_packet.get_source(),
-                                        udp_packet.get_source(),
-                                        ip_packet.get_destination(),
-                                        udp_packet.get_destination(),
-                                    );
-                                }
-                            }
-                            IpNextHeaderProtocols::Tcp => {
-                                if let Some(tcp_packet) = TcpPacket::new(ip_packet.payload()) {
-                                    println!("{:?}", tcp_packet);
-                                    let destination_port = tcp_packet.get_destination();
-                                    if destination_port != access_port {
-                                        println!(
-                                            "TCP: {}:{} -> {}:{}",
-                                            ip_packet.get_source(),
-                                            tcp_packet.get_source(),
-                                            ip_packet.get_destination(),
-                                            tcp_packet.get_destination(),
-                                        );
+                        if ip_packet.get_destination() == local_ip {
+                            match ip_packet.get_next_level_protocol() {
+                                IpNextHeaderProtocols::Udp => {
+                                    if let Some(udp_packet) = UdpPacket::new(ip_packet.payload()) {
+                                        let source_port = udp_packet.get_source();
+                                        let destination_port = udp_packet.get_source();
+                                        if source_port != access_port
+                                            && destination_port != access_port
+                                        {
+                                            let connection_info = Connection {
+                                                listener_ip: ip_packet.get_destination(),
+                                                network_tag: network_tag.clone(),
+                                                source_ip: ip_packet.get_source(),
+                                                source_port: udp_packet.get_source(),
+                                                target_port: udp_packet.get_destination(),
+                                                protocol: "udp".to_string(),
+                                                timestamp: chrono::Utc::now(),
+                                            };
+                                            write_connection_to_log(
+                                                log_writer.clone(),
+                                                &connection_info,
+                                            )
+                                            .await;
+                                            println!(
+                                                "UDP: {}:{} -> {}:{}",
+                                                ip_packet.get_source(),
+                                                udp_packet.get_source(),
+                                                ip_packet.get_destination(),
+                                                udp_packet.get_destination(),
+                                            );
+                                        }
                                     }
                                 }
+                                IpNextHeaderProtocols::Tcp => {
+                                    if let Some(tcp_packet) = TcpPacket::new(ip_packet.payload()) {
+                                        let source_port = tcp_packet.get_source();
+                                        let destination_port = tcp_packet.get_source();
+                                        let flags = tcp_packet.get_flags();
+                                        if source_port != access_port
+                                            && destination_port != access_port
+                                        {
+                                            if flags & (TcpFlags::RST | TcpFlags::ACK) == 0 {
+                                                let source_port = tcp_packet.get_source();
+                                                let destination_port = tcp_packet.get_source();
+                                                if source_port != access_port
+                                                    && destination_port != access_port
+                                                {
+                                                    let connection_info = Connection {
+                                                        listener_ip: ip_packet.get_destination(),
+                                                        network_tag: network_tag.clone(),
+                                                        source_ip: ip_packet.get_source(),
+                                                        source_port: tcp_packet.get_source(),
+                                                        target_port: tcp_packet.get_destination(),
+                                                        protocol: "tcp".to_string(),
+                                                        timestamp: chrono::Utc::now(),
+                                                    };
+                                                    write_connection_to_log(
+                                                        log_writer.clone(),
+                                                        &connection_info,
+                                                    )
+                                                    .await;
+                                                    println!(
+                                                        "TCP: {}:{} -> {}:{}",
+                                                        ip_packet.get_source(),
+                                                        tcp_packet.get_source(),
+                                                        ip_packet.get_destination(),
+                                                        tcp_packet.get_destination(),
+                                                    );
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                _ => {}
                             }
-                            _ => {}
                         }
                     }
                 }
