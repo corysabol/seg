@@ -252,7 +252,6 @@ pub async fn run_listener(
     network_tag: String,
     protocol: ScanProtocol,
 ) {
-    println!("{}", access_port);
     let port: u16 = access_port.parse().expect(&format!(
         "Error invalid access port specification {}",
         access_port
@@ -333,20 +332,18 @@ pub async fn handle_packet_log(
                                         if source_port != access_port
                                             && destination_port != access_port
                                         {
-                                            let connection_info = Connection {
+                                            let packet_info = PacketInfo {
                                                 listener_ip: ip_packet.get_destination(),
                                                 network_tag: network_tag.clone(),
                                                 source_ip: ip_packet.get_source(),
                                                 source_port: udp_packet.get_source(),
                                                 target_port: udp_packet.get_destination(),
                                                 protocol: "udp".to_string(),
+                                                flags: vec![],
                                                 timestamp: chrono::Utc::now(),
                                             };
-                                            write_connection_to_log(
-                                                log_writer.clone(),
-                                                &connection_info,
-                                            )
-                                            .await;
+                                            write_packet_to_log(log_writer.clone(), &packet_info)
+                                                .await;
                                             println!(
                                                 "UDP: {}:{} -> {}:{}",
                                                 ip_packet.get_source(),
@@ -365,34 +362,35 @@ pub async fn handle_packet_log(
                                         if source_port != access_port
                                             && destination_port != access_port
                                         {
-                                            if flags & (TcpFlags::RST | TcpFlags::ACK) == 0 {
-                                                let source_port = tcp_packet.get_source();
-                                                let destination_port = tcp_packet.get_source();
-                                                if source_port != access_port
-                                                    && destination_port != access_port
-                                                {
-                                                    let connection_info = Connection {
-                                                        listener_ip: ip_packet.get_destination(),
-                                                        network_tag: network_tag.clone(),
-                                                        source_ip: ip_packet.get_source(),
-                                                        source_port: tcp_packet.get_source(),
-                                                        target_port: tcp_packet.get_destination(),
-                                                        protocol: "tcp".to_string(),
-                                                        timestamp: chrono::Utc::now(),
-                                                    };
-                                                    write_connection_to_log(
-                                                        log_writer.clone(),
-                                                        &connection_info,
-                                                    )
-                                                    .await;
-                                                    println!(
-                                                        "TCP: {}:{} -> {}:{}",
-                                                        ip_packet.get_source(),
-                                                        tcp_packet.get_source(),
-                                                        ip_packet.get_destination(),
-                                                        tcp_packet.get_destination(),
-                                                    );
-                                                }
+                                            let source_port = tcp_packet.get_source();
+                                            let destination_port = tcp_packet.get_destination();
+                                            if source_port != access_port
+                                                && destination_port != access_port
+                                            {
+                                                let packet_info = PacketInfo {
+                                                    listener_ip: ip_packet.get_destination(),
+                                                    network_tag: network_tag.clone(),
+                                                    source_ip: ip_packet.get_source(),
+                                                    source_port: tcp_packet.get_source(),
+                                                    target_port: tcp_packet.get_destination(),
+                                                    protocol: "tcp".to_string(),
+                                                    flags: tcp_flags_to_iter(flags)
+                                                        .map(String::from)
+                                                        .collect(),
+                                                    timestamp: chrono::Utc::now(),
+                                                };
+                                                write_packet_to_log(
+                                                    log_writer.clone(),
+                                                    &packet_info,
+                                                )
+                                                .await;
+                                                println!(
+                                                    "TCP: {}:{} -> {}:{}",
+                                                    ip_packet.get_source(),
+                                                    tcp_packet.get_source(),
+                                                    ip_packet.get_destination(),
+                                                    tcp_packet.get_destination(),
+                                                );
                                             }
                                         }
                                     }

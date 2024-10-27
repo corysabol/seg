@@ -35,11 +35,7 @@ mod platform {
     }
 
     pub async fn teardown_firewall_rules() {
-        let cleanup_commands = [
-            "delete table ip nat",
-            "delete table ip filter",
-            "flush ruleset",
-        ];
+        let cleanup_commands = ["delete table ip filter", "flush ruleset"];
 
         println!("Cleaning up nft rules...");
         for cmd in &cleanup_commands {

@@ -49,9 +49,9 @@ pub async fn run_command(
     Ok(())
 }
 
-pub async fn write_connection_to_log(
+pub async fn write_packet_to_log(
     log_writer: Arc<tokio::sync::Mutex<BufWriter<tokio::fs::File>>>,
-    connection: &data::Connection,
+    connection: &data::PacketInfo,
 ) {
     let json = to_string(connection).unwrap();
 
