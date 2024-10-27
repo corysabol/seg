@@ -1,0 +1,27 @@
+FROM ubuntu:latest
+
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    curl \
+    libssl-dev \
+    pkg-config \
+    xz-utils \
+    git \
+    neovim
+
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+RUN cargo install nu
+RUN cargo install bat
+
+RUN curl -o zig.tar.xz https://ziglang.org/builds/zig-linux-x86_64-0.14.0-dev.2032+c563ba6b1.tar.xz
+
+RUN mkdir zig
+RUN tar -xf zig.tar.xz -C zig --strip-components=1
+RUN mv zig/zig /usr/bin/
+
+WORKDIR /usr/src/dev
+
+CMD ["nu"]

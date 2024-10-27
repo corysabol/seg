@@ -1,9 +1,19 @@
 use crate::consts::*;
+use crate::data::*;
 use crate::firewall::*;
 use crate::util::*;
 
-use std::net::IpAddr;
-use std::net::SocketAddr;
+use pnet::datalink::{self, NetworkInterface};
+
+use pnet::packet::ethernet::{EtherTypes, EthernetPacket, MutableEthernetPacket};
+use pnet::packet::ip::{IpNextHeaderProtocol, IpNextHeaderProtocols};
+use pnet::packet::ipv4::Ipv4Packet;
+use pnet::packet::tcp::TcpFlags;
+use pnet::packet::tcp::TcpPacket;
+use pnet::packet::udp::UdpPacket;
+use pnet::packet::Packet;
+
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
@@ -14,7 +24,6 @@ use tokio::net::{TcpListener, TcpStream, UdpSocket};
 use tokio::process::Command;
 use tokio::signal::ctrl_c;
 use tokio::sync::Semaphore;
-use tokio::task;
 use tokio::time::timeout;
 
 #[derive(Clone, clap::ValueEnum)]
@@ -22,13 +31,6 @@ pub enum ScanProtocol {
     TCP,
     UDP,
     BOTH,
-}
-
-pub enum ScanType {
-    TCP_SYN,
-    TCP_FULL,
-    TCP_ACK,
-    ICMP,
 }
 
 enum ScannerSocketIpv4 {
@@ -205,7 +207,7 @@ pub async fn scan_nmap(listener_ip: &str, output_file: &str, scan_type: ScanProt
             nmap_args.extend(vec![
                 "-p",
                 "1-65535",
-                "-sS",
+                "-sT",
                 "-sU",
                 listener_ip,
                 "--stats-every",
@@ -245,29 +247,15 @@ pub async fn scan_nmap(listener_ip: &str, output_file: &str, scan_type: ScanProt
 }
 
 pub async fn run_listener(
-    rules: Option<String>,
-    address: String,
     access_port: String,
-    port: String,
+    interface_name: String,
+    network_tag: String,
+    protocol: ScanProtocol,
 ) {
-    let access_port: u16 = access_port
-        .parse()
-        .expect(&format!("Error invalid port specification {}", port));
-    let port: u16 = port
-        .parse()
-        .expect(&format!("Error invalid port specification {}", port));
-
-    let address: IpAddr = address
-        .parse()
-        .expect(&format!("Invalid listener address specified {}", address));
-
-    // Establish firewall rules for fowarding packets to the listener port
-    setup_firewall_rules(
-        rules,
-        access_port.to_string().clone().as_str(),
-        port.to_string().clone().as_str(),
-    )
-    .await;
+    let port: u16 = access_port.parse().expect(&format!(
+        "Error invalid access port specification {}",
+        access_port
+    ));
 
     // Open log file and wrap it in a shared buffered writer for performance
     let log_file_path = "connections.log";
@@ -281,23 +269,11 @@ pub async fn run_listener(
     let log_writer = BufWriter::new(log_file);
     let log_writer = Arc::new(tokio::sync::Mutex::new(log_writer));
 
-    // Bind TCP and UDP listeners
-    let addr = address.clone();
-
-    let tcp_listener = TcpListener::bind((addr, port))
-        .await
-        .expect("Unable to bind TCP listener");
-    let udp_listener = UdpSocket::bind((addr, port))
-        .await
-        .expect("Unable to bind UDP listener");
-
-    // Create tokio tasks
-    let tcp_task = handle_tcp(tcp_listener, log_writer.clone());
-    let udp_task = handle_udp(udp_listener, log_writer.clone());
+    // Setup rules to accept all ports on UDP and TCP
+    setup_firewall_rules(None, &access_port).await;
 
     tokio::select! {
-        _ = tcp_task => {},
-        _ = udp_task => {},
+        _ = handle_packet_log(interface_name, network_tag, port, protocol, log_writer) => {}
         _ = ctrl_c() => {
             println!("Shutting down... Cleaning up iptable rules");
             teardown_firewall_rules().await;
@@ -305,53 +281,127 @@ pub async fn run_listener(
     }
 }
 
-pub async fn handle_tcp(
-    tcp_listener: TcpListener,
+pub async fn handle_packet_log(
+    interface_name: String,
+    network_tag: String,
+    access_port: u16,
+    protocol: ScanProtocol,
     log_writer: Arc<tokio::sync::Mutex<BufWriter<tokio::fs::File>>>,
 ) {
-    println!(
-        "Listening for TCP connections on {:?}",
-        tcp_listener
-            .local_addr()
-            .expect("Failed to get local addr of TCP listener")
-    );
-    loop {
-        match tcp_listener.accept().await {
-            Ok((_socket, addr)) => {
-                let time = chrono::Utc::now();
-                let log_entry = format!("{}/tcp_connect/{:?}\n", time, addr);
-                println!("{}", log_entry);
-                write_to_log(log_writer.clone(), log_entry).await;
-            }
-            Err(e) => {
-                eprintln!("Failed to accept TCP connection on port {}", e);
-            }
-        }
-    }
-}
+    use pnet::datalink::Channel::Ethernet;
 
-pub async fn handle_udp(
-    udp_socket: UdpSocket,
-    log_writer: Arc<tokio::sync::Mutex<BufWriter<tokio::fs::File>>>,
-) {
-    let mut buf = [0; 1024];
-    println!(
-        "Listening for UDP connections on {:?}",
-        udp_socket
-            .local_addr()
-            .expect("Failed to get local addr of UDP listener")
-    );
+    // Find interfaces
+    let interfaces = datalink::interfaces();
+    let interface = interfaces
+        .into_iter()
+        .find(|iface: &NetworkInterface| {
+            iface.is_up()
+                && !iface.is_loopback()
+                && iface.ips.len() > 0
+                && iface.name == interface_name
+        })
+        .expect("Could not find interface");
+
+    let local_ip = match interface.ips.iter().find(|ip| ip.is_ipv4()) {
+        Some(ip) => match ip.ip() {
+            std::net::IpAddr::V4(ipv4) => ipv4,
+            _ => panic!("Expected an IPv4 address"),
+        },
+        None => panic!("No IPv4 address found on interface"),
+    };
+
+    // Create a channel to receive on
+    let (_, mut rx) = match datalink::channel(&interface, Default::default()) {
+        Ok(Ethernet(tx, rx)) => (tx, rx),
+        Ok(_) => todo!(),
+        Err(_) => todo!(),
+    };
+
     loop {
-        match udp_socket.recv_from(&mut buf).await {
-            Ok((_amt, src)) => {
-                let time = chrono::Utc::now();
-                let log_entry = format!("{:?}/udp_connect/{:?}\n", time, src);
-                println!("{}", log_entry);
-                write_to_log(log_writer.clone(), log_entry).await;
+        match rx.next() {
+            Ok(packet) => {
+                if let Some(ethernet) = EthernetPacket::new(packet) {
+                    // Handle IPv4 packets
+                    if let Some(ip_packet) = Ipv4Packet::new(ethernet.payload()) {
+                        if ip_packet.get_destination() == local_ip {
+                            match ip_packet.get_next_level_protocol() {
+                                IpNextHeaderProtocols::Udp => {
+                                    if let Some(udp_packet) = UdpPacket::new(ip_packet.payload()) {
+                                        let source_port = udp_packet.get_source();
+                                        let destination_port = udp_packet.get_source();
+                                        if source_port != access_port
+                                            && destination_port != access_port
+                                        {
+                                            let packet_info = PacketInfo {
+                                                listener_ip: ip_packet.get_destination(),
+                                                network_tag: network_tag.clone(),
+                                                source_ip: ip_packet.get_source(),
+                                                source_port: udp_packet.get_source(),
+                                                target_port: udp_packet.get_destination(),
+                                                protocol: "udp".to_string(),
+                                                flags: vec![],
+                                                timestamp: chrono::Utc::now(),
+                                            };
+                                            write_packet_to_log(log_writer.clone(), &packet_info)
+                                                .await;
+                                            println!(
+                                                "UDP: {}:{} -> {}:{}",
+                                                ip_packet.get_source(),
+                                                udp_packet.get_source(),
+                                                ip_packet.get_destination(),
+                                                udp_packet.get_destination(),
+                                            );
+                                        }
+                                    }
+                                }
+                                IpNextHeaderProtocols::Tcp => {
+                                    if let Some(tcp_packet) = TcpPacket::new(ip_packet.payload()) {
+                                        let source_port = tcp_packet.get_source();
+                                        let destination_port = tcp_packet.get_source();
+                                        let flags = tcp_packet.get_flags();
+                                        if source_port != access_port
+                                            && destination_port != access_port
+                                        {
+                                            let source_port = tcp_packet.get_source();
+                                            let destination_port = tcp_packet.get_destination();
+                                            if source_port != access_port
+                                                && destination_port != access_port
+                                            {
+                                                let packet_info = PacketInfo {
+                                                    listener_ip: ip_packet.get_destination(),
+                                                    network_tag: network_tag.clone(),
+                                                    source_ip: ip_packet.get_source(),
+                                                    source_port: tcp_packet.get_source(),
+                                                    target_port: tcp_packet.get_destination(),
+                                                    protocol: "tcp".to_string(),
+                                                    flags: tcp_flags_to_iter(flags)
+                                                        .map(String::from)
+                                                        .collect(),
+                                                    timestamp: chrono::Utc::now(),
+                                                };
+                                                write_packet_to_log(
+                                                    log_writer.clone(),
+                                                    &packet_info,
+                                                )
+                                                .await;
+                                                println!(
+                                                    "TCP: {}:{} -> {}:{}",
+                                                    ip_packet.get_source(),
+                                                    tcp_packet.get_source(),
+                                                    ip_packet.get_destination(),
+                                                    tcp_packet.get_destination(),
+                                                );
+                                            }
+                                        }
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
             }
-            Err(e) => {
-                eprintln!("Failed to receive UDP packet on port {}", e);
-            }
+            Err(_) => {}
         }
     }
 }

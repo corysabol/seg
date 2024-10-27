@@ -1,7 +1,11 @@
+use chrono::Utc;
+use serde_json::to_string;
 use std::process::Stdio;
 use std::sync::Arc;
 use tokio::io::{AsyncWriteExt, BufWriter};
 use tokio::process::Command;
+
+use crate::data;
 
 pub async fn run_command(
     command: &str,
@@ -43,6 +47,18 @@ pub async fn run_command(
         ));
     }
     Ok(())
+}
+
+pub async fn write_packet_to_log(
+    log_writer: Arc<tokio::sync::Mutex<BufWriter<tokio::fs::File>>>,
+    connection: &data::PacketInfo,
+) {
+    let json = to_string(connection).unwrap();
+
+    let mut writer = log_writer.lock().await;
+    writer.write_all(json.as_bytes()).await.unwrap();
+    writer.write_all("\n".as_bytes()).await.unwrap();
+    writer.flush().await.unwrap();
 }
 
 pub async fn write_to_log(
