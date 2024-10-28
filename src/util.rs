@@ -5,7 +5,7 @@ use std::sync::Arc;
 use tokio::io::{AsyncWriteExt, BufWriter};
 use tokio::process::Command;
 
-use crate::data;
+use common::data::*;
 
 pub async fn run_command(
     command: &str,
@@ -51,7 +51,7 @@ pub async fn run_command(
 
 pub async fn write_packet_to_log(
     log_writer: Arc<tokio::sync::Mutex<BufWriter<tokio::fs::File>>>,
-    connection: &data::PacketInfo,
+    connection: &PacketInfo,
 ) {
     let json = to_string(connection).unwrap();
 
