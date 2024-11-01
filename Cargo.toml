@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [workspace]
-members = [ ".", "viewer", "common" ]
+members = [ ".", "viewer", "data" ]
 
 [dependencies]
 chrono = { version = "0.4.38", features = ["serde"] }
@@ -14,4 +14,4 @@ serde = { version = "1.0.213", features = ["derive"] }
 serde_json = "1.0.132"
 tempfile = "3.13.0"
 tokio = { version = "1.40.0", features = ["full"] }
-common = { path = "./common" }
+data = { path = "./data" }

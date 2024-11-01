@@ -89,7 +89,7 @@ pub struct ValuesConfigSlidersSimulation {
 }
 
 pub fn draw_simulation_config_sliders(
-    ui: &mut Ui,
+    ui: &mut egui::Ui,
     mut values: ValuesConfigSlidersSimulation,
     mut on_change: impl FnMut(f32, f32, f32),
 ) {

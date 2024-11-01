@@ -1,14 +1,26 @@
+use std::net::IpAddr;
+use std::net::Ipv4Addr;
 use std::time::Instant;
 
 use crossbeam::channel::{unbounded, Receiver, Sender};
+use data::*;
 use drawers::ValuesSectionDebug;
 use eframe::{run_native, App, CreationContext};
 use egui::{CollapsingHeader, Context, ScrollArea, Ui};
+use egui_file::FileDialog;
 use egui_graphs::events::Event;
 use egui_graphs::Graph;
-use petgraph::stable_graph::{DefaultIx, EdgeIndex, NodeIndex};
+use egui_graphs::GraphView;
+use petgraph::stable_graph::{DefaultIx, EdgeIndex, NodeIndex, StableGraph};
 use petgraph::Directed;
 use rand::Rng;
+use std::{
+    collections::HashSet,
+    ffi::OsStr,
+    fs::File,
+    io::{self, BufRead},
+    path::{Path, PathBuf},
+};
 
 mod drawers;
 mod settings;
@@ -29,6 +41,10 @@ pub struct SegViewerApp {
     event_consumer: Receiver<Event>,
     pan: [f32; 2],
     zoom: f32,
+    packets: Vec<PacketInfo>,
+    hosts: HashSet<Ipv4Addr>,
+    opended_file: Option<PathBuf>,
+    open_file_dialog: Option<FileDialog>,
 }
 
 impl SegViewerApp {
@@ -54,6 +70,10 @@ impl SegViewerApp {
             frames_last_time_span: 0,
             pan: [0., 0.],
             zoom: 0.,
+            packets: vec![],
+            hosts: HashSet::new(),
+            opended_file: None,
+            open_file_dialog: None,
         }
     }
 
@@ -79,7 +99,7 @@ impl SegViewerApp {
                 Event::Pan(payload) => self.pan = payload.new_pan,
                 Event::Zoom(payload) => self.zoom = payload.new_zoom,
                 Event::NodeMove(payload) => {
-                    let node_id = NodeIndex::new(payload.id);
+                    let node_id: NodeIndex<usize> = NodeIndex::new(payload.id);
                 }
                 _ => {}
             }
@@ -294,7 +314,7 @@ impl SegViewerApp {
     fn reset(&mut self) {
         let settings_graph = settings::SettingsGraph::default();
 
-        let mut g = random_graph(settings_graph.count_node, settings_graph.count_edge);
+        let g = Graph::new(petgraph::stable_graph::StableGraph::new());
 
         self.settings_graph = settings_graph;
 
@@ -310,17 +330,69 @@ impl App for SegViewerApp {
                 ScrollArea::vertical().show(ui, |ui| {
                     ui.add_space(10.);
 
-                    egui::CollapsingHeader::new("Debug")
-                        .default_open(true)
-                        .show(ui, |ui| self.draw_section_debug(ui));
+                    if ui.button("Import data").clicked() {
+                        let filter = Box::new({
+                            let ext = Some(OsStr::new("jsonl"));
+                            move |path: &Path| -> bool { path.extension() == ext }
+                        });
+                        let mut dialog = FileDialog::open_file(self.opended_file.clone())
+                            .show_files_filter(filter);
+                        dialog.open();
+                        self.open_file_dialog = Some(dialog);
+                    }
 
                     ui.add_space(10.);
 
-                    CollapsingHeader::new("Widget")
+                    //egui::CollapsingHeader::new("Debug")
+                    //    .default_open(true)
+                    //    .show(ui, |ui| self.draw_section_debug(ui));
+
+                    //ui.add_space(10.);
+
+                    CollapsingHeader::new("Options")
                         .default_open(true)
                         .show(ui, |ui| self.draw_section_widget(ui));
                 });
             });
+
+        // If we have a file dialog then show it
+        if let Some(dialog) = &mut self.open_file_dialog {
+            if dialog.show(ctx).selected() {
+                if let Some(file) = dialog.path() {
+                    self.opended_file = Some(file.to_path_buf());
+                    println!("{:?}", self.opended_file);
+                }
+            }
+        }
+
+        // If we have a file we need to parse each line to data::PacketInfo instances
+        if let Some(open_file_path) = &self.opended_file {
+            let file = File::open(open_file_path).unwrap();
+            let packet_infos: Vec<PacketInfo> = io::BufReader::new(file)
+                .lines()
+                .map(|line| {
+                    let line = line.unwrap();
+                    let packet_info: PacketInfo = serde_json::from_str(&line).unwrap();
+                    // push each host into the hosts hashset
+                    self.hosts.insert(packet_info.source_ip);
+                    self.hosts.insert(packet_info.listener_ip);
+                    packet_info
+                })
+                .collect::<Vec<_>>();
+            self.packets = packet_infos;
+
+            // TODO: construct graph nodes from hosts
+            // The nodes should have a label with the IP address and the network tag
+            // thought: maybe clicking on a node shows a panel of node info
+
+            // TODO: construct edges from packets
+            // The edges should be directed, and have a label with the port and optionally the TCP
+            // flags
+
+            // Clear the app state
+            self.opended_file = None;
+            self.open_file_dialog = None;
+        }
 
         egui::CentralPanel::default().show(ctx, |ui| {
             let settings_interaction = &egui_graphs::SettingsInteraction::new()
@@ -342,7 +414,7 @@ impl App for SegViewerApp {
             let settings_style = &egui_graphs::SettingsStyle::new()
                 .with_labels_always(self.settings_style.labels_always);
             ui.add(
-                &mut DefaultGraphView::new(&mut self.g)
+                &mut GraphView::new(&mut self.g)
                     .with_interactions(settings_interaction)
                     .with_navigations(settings_navigation)
                     .with_styles(settings_style)

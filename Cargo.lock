@@ -819,16 +819,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "common"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "pnet",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "concurrent-queue"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -978,6 +968,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "96a6ac251f4a2aca6b3f91340350eab87ae57c3f127ffeb585e92bd336717991"
 
 [[package]]
+name = "data"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "digest"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1120,6 +1119,15 @@ dependencies = [
  "web-time",
  "webbrowser",
  "winit",
+]
+
+[[package]]
+name = "egui_file"
+version = "0.19.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f31e8280f9aea0f814013815071aebcf5c341e1d5420b381d3b0c1e3c42604d2"
+dependencies = [
+ "egui",
 ]
 
 [[package]]
@@ -2763,7 +2771,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "clap",
- "common",
+ "data",
  "pnet",
  "serde",
  "serde_json",
@@ -3232,10 +3240,11 @@ name = "viewer"
 version = "0.1.0"
 dependencies = [
  "chrono",
- "common",
  "crossbeam",
+ "data",
  "eframe",
  "egui",
+ "egui_file",
  "egui_graphs",
  "petgraph",
  "rand",

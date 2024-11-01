@@ -1,11 +1,44 @@
-use chrono::Utc;
 use serde_json::to_string;
 use std::process::Stdio;
 use std::sync::Arc;
 use tokio::io::{AsyncWriteExt, BufWriter};
 use tokio::process::Command;
 
-use common::data::*;
+use data::*;
+
+use chrono::{DateTime, Utc};
+use pnet::packet::tcp::TcpFlags;
+
+pub fn tcp_flags_to_iter(flags: u8) -> impl Iterator<Item = &'static str> {
+    let mut flag_strings = vec![];
+
+    if flags & TcpFlags::FIN != 0 {
+        flag_strings.push("FIN");
+    }
+    if flags & TcpFlags::SYN != 0 {
+        flag_strings.push("SYN");
+    }
+    if flags & TcpFlags::RST != 0 {
+        flag_strings.push("RST");
+    }
+    if flags & TcpFlags::PSH != 0 {
+        flag_strings.push("PSH");
+    }
+    if flags & TcpFlags::ACK != 0 {
+        flag_strings.push("ACK");
+    }
+    if flags & TcpFlags::URG != 0 {
+        flag_strings.push("URG");
+    }
+    if flags & TcpFlags::ECE != 0 {
+        flag_strings.push("ECE");
+    }
+    if flags & TcpFlags::CWR != 0 {
+        flag_strings.push("CWR");
+    }
+
+    flag_strings.into_iter()
+}
 
 pub async fn run_command(
     command: &str,

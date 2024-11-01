@@ -3,7 +3,7 @@ use crate::consts::*;
 use crate::firewall::*;
 use crate::util::*;
 
-use common::data::*;
+use data::*;
 
 use pnet::datalink::{self, NetworkInterface};
 
