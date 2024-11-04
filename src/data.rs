@@ -34,14 +34,14 @@ pub fn tcp_flags_to_iter(flags: u8) -> impl Iterator<Item = &'static str> {
     flag_strings.into_iter()
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct PacketInfo {
     pub listener_ip: Ipv4Addr,
     pub network_tag: String,
     pub source_ip: Ipv4Addr,
     pub source_port: u16,
     pub target_port: u16,
-    pub protocol: String,   // "tcp" or "udp"
-    pub flags: Vec<String>, // Todo need a good way to display the flags
+    pub protocol: String, // "tcp" or "udp"
+    pub flags: Vec<String>,
     pub timestamp: DateTime<Utc>,
 }

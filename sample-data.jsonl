@@ -1,0 +1,8 @@
+{"listener_ip":"172.19.247.124","network_tag":"foo","source_ip":"172.19.254.181","source_port":53686,"target_port":24151,"protocol":"tcp","flags":["SYN"],"timestamp":"2024-11-01T19:26:06.139649918Z"}
+{"listener_ip":"172.19.247.124","network_tag":"foo","source_ip":"172.19.254.181","source_port":50356,"target_port":50563,"protocol":"tcp","flags":["SYN"],"timestamp":"2024-11-01T19:26:06.139810217Z"}
+{"listener_ip":"172.19.247.124","network_tag":"foo","source_ip":"172.19.254.181","source_port":41954,"target_port":41534,"protocol":"tcp","flags":["SYN"],"timestamp":"2024-11-01T19:26:06.139974917Z"}
+{"listener_ip":"172.19.247.124","network_tag":"foo","source_ip":"172.19.254.181","source_port":38230,"target_port":63750,"protocol":"tcp","flags":["SYN"],"timestamp":"2024-11-01T19:26:06.140136317Z"}
+{"listener_ip":"172.19.247.124","network_tag":"foo","source_ip":"172.19.254.181","source_port":56160,"target_port":52937,"protocol":"tcp","flags":["SYN"],"timestamp":"2024-11-01T19:26:06.140285516Z"}
+{"listener_ip":"172.19.247.124","network_tag":"foo","source_ip":"91.189.91.157","source_port":123,"target_port":58989,"protocol":"udp","flags":[],"timestamp":"2024-11-01T19:24:54.524423023Z"}
+{"listener_ip":"172.19.247.124","network_tag":"foo","source_ip":"172.19.254.181","source_port":62758,"target_port":60771,"protocol":"udp","flags":[],"timestamp":"2024-11-01T19:24:57.832838426Z"}
+{"listener_ip":"172.19.247.124","network_tag":"foo","source_ip":"172.19.254.181","source_port":62758,"target_port":46798,"protocol":"udp","flags":[],"timestamp":"2024-11-01T19:24:57.833187117Z"}
