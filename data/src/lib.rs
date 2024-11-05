@@ -1,6 +1,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::net::Ipv4Addr;
+use wasm_bindgen::prelude::*;
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct PacketInfo {
@@ -12,4 +13,14 @@ pub struct PacketInfo {
     pub protocol: String,   // "tcp" or "udp"
     pub flags: Vec<String>, // Todo need a good way to display the flags
     pub timestamp: DateTime<Utc>,
+}
+
+#[wasm_bindgen]
+pub fn parse_jsonl(content: &str) -> Result<JsValue, JsError> {
+    let packets: Vec<PacketInfo> = content
+        .lines()
+        .filter_map(|lines| serde_json::from_str(line).ok())
+        .collect();
+
+    Ok(serde_wasm_bindgen::to_value(&packets)?)
 }
