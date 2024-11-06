@@ -1,12 +1,14 @@
 <script lang="ts">
-  import { invoke } from "@tauri-apps/api/tauri";
-  import { open } from "@tauri-apps/api/dialog";
-  import { appDir } from "@tauri-apps/api/path";
+  import { type PacketInfo, PacketInfoSchema } from "$lib/types";
+  import { invoke } from "@tauri-apps/api/core";
+  import { open } from "@tauri-apps/plugin-dialog";
+  import { open as openFile } from "@tauri-apps/plugin-fs";
+  import { appConfigDir } from "@tauri-apps/api/path";
 
   const handle_file_open = async () => {
     const selected = await open({
       multiple: true,
-      defaultPath: await appDir(),
+      defaultPath: await appConfigDir(),
       filters: [
         {
           name: "network-data",
@@ -20,6 +22,10 @@
       console.log(selected);
 
       // Now we need to open the file
+      invoke('load_data', { filePath: selected[0] }).then(
+        (data) => console.log(data)
+      );
+
     } else if (selected === null) {
       // User cancelled the selection
     } else {
