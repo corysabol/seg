@@ -6,9 +6,11 @@
   import { appConfigDir } from "@tauri-apps/api/path";
   import { VisSingleContainer, VisGraph } from "@unovis/svelte";
   import { GraphLayoutType, GraphNodeShape } from "@unovis/ts";
+  import { writable } from "svelte/store";
+    import type { tooltip } from "@unovis/ts/components/tooltip/style";
 
   // Data ====
-  type NodeDataum = {
+  type NodeDatum = {
     id: string;
     label: string;
     shape: string;
@@ -29,13 +31,25 @@
   }
   // =========
 
+  const layoutType = GraphLayoutType.Dagre
+  const nodeLabel = (n: NodeDatum) => n.label;
+  const nodeShape = (n: NodeDatum) => n.shape as GraphNodeShape;
+  const nodeStroke = (l: LinkDatum) => l.color;
+  const linkFlow = (l: LinkDatum) => l.active;
+  const linkStroke = (l: LinkDatum) => l.color;
+
+  // State ====
+  let isDataLoaded: boolean = false;
+  let data: GraphData;
+  // ==========
+
   const handle_file_open = async () => {
     const selected = await open({
       multiple: true,
       defaultPath: await appConfigDir(),
       filters: [
         {
-          name: "network-data",
+          name: "jsonl",
           extensions: ["jsonl"],
         },
       ],
@@ -46,8 +60,12 @@
       console.log(selected);
 
       // Now we need to open the file
-      invoke('load_data', { filePath: selected[0] }).then(
-        (data) => console.log(data)
+      (invoke('load_data', { filePath: selected[0] }) as Promise<GraphData>).then(
+        (parsedData) => {
+          data = parsedData;
+          isDataLoaded = true;
+          console.log(data);
+        }
       );
 
     } else if (selected === null) {
@@ -56,10 +74,26 @@
       // user selected a single directory
     }
   };
+ 
 </script>
 
 <div class="container">
   <button on:click={handle_file_open}>Import data</button>
+</div>
+
+<div class="container">
+  {#if isDataLoaded}
+  <VisSingleContainer {data} height={600}>
+    <VisGraph
+      {layoutType}
+      {nodeLabel}
+      {nodeShape}
+      {nodeStroke}
+      {linkFlow}
+      {linkStroke}
+    />
+  </VisSingleContainer>
+  {/if}
 </div>
 
 <style>
