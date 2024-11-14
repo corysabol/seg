@@ -4,7 +4,30 @@
   import { open } from "@tauri-apps/plugin-dialog";
   import { open as openFile } from "@tauri-apps/plugin-fs";
   import { appConfigDir } from "@tauri-apps/api/path";
-  import * as d3 from "d3";
+  import { VisSingleContainer, VisGraph } from "@unovis/svelte";
+  import { GraphLayoutType, GraphNodeShape } from "@unovis/ts";
+
+  // Data ====
+  type NodeDataum = {
+    id: string;
+    label: string;
+    shape: string;
+    color: string;
+  }
+
+  type LinkDatum = {
+    id: string;
+    source: string;
+    target: string;
+    active: boolean;
+    color: string;
+  }
+
+  type GraphData = {
+    nodes: NodeDatum[];
+    links: LinkDatum[];
+  }
+  // =========
 
   const handle_file_open = async () => {
     const selected = await open({
