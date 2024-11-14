@@ -4,6 +4,7 @@
   import { open } from "@tauri-apps/plugin-dialog";
   import { open as openFile } from "@tauri-apps/plugin-fs";
   import { appConfigDir } from "@tauri-apps/api/path";
+  import * as d3 from "d3";
 
   const handle_file_open = async () => {
     const selected = await open({
