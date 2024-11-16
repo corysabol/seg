@@ -1,13 +1,10 @@
 <script lang="ts">
-  import { type PacketInfo, PacketInfoSchema } from "$lib/types";
   import { invoke } from "@tauri-apps/api/core";
   import { open } from "@tauri-apps/plugin-dialog";
   import { open as openFile } from "@tauri-apps/plugin-fs";
   import { appConfigDir } from "@tauri-apps/api/path";
   import { VisSingleContainer, VisGraph } from "@unovis/svelte";
   import { GraphLayoutType, GraphNodeShape } from "@unovis/ts";
-  import { writable } from "svelte/store";
-    import type { tooltip } from "@unovis/ts/components/tooltip/style";
 
   // Data ====
   type NodeDatum = {
@@ -39,8 +36,8 @@
   const linkStroke = (l: LinkDatum) => l.color;
 
   // State ====
-  let isDataLoaded: boolean = false;
-  let data: GraphData;
+  let isDataLoaded: boolean = $state(false);
+  let data: GraphData = $state({ nodes: [], links: [] });
   // ==========
 
   const handle_file_open = async () => {
@@ -99,16 +96,7 @@
 <style>
   .container {
     width: 100%;
-    height: 100vh;
     display: flex;
     flex-direction: column;
-  }
-  .toolbar {
-    padding: 1rem;
-    border-bottom: 1px solid #ccc;
-  }
-  .graph-view {
-    flex: 1;
-    overflow: hidden;
   }
 </style>
