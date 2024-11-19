@@ -12,7 +12,7 @@
     label: string;
     shape: string;
     color: string;
-  }
+  };
 
   type LinkDatum = {
     id: string;
@@ -20,15 +20,15 @@
     target: string;
     active: boolean;
     color: string;
-  }
+  };
 
   type GraphData = {
     nodes: NodeDatum[];
     links: LinkDatum[];
-  }
+  };
   // =========
 
-  const layoutType = GraphLayoutType.Dagre
+  const layoutType = GraphLayoutType.Dagre;
   const nodeLabel = (n: NodeDatum) => n.label;
   const nodeShape = (n: NodeDatum) => n.shape as GraphNodeShape;
   const nodeStroke = (l: LinkDatum) => l.color;
@@ -57,21 +57,19 @@
       console.log(selected);
 
       // Now we need to open the file
-      (invoke('load_data', { filePath: selected[0] }) as Promise<GraphData>).then(
-        (parsedData) => {
-          data = parsedData;
-          isDataLoaded = true;
-          console.log(data);
-        }
-      );
-
+      (
+        invoke("load_data", { filePath: selected[0] }) as Promise<GraphData>
+      ).then((parsedData) => {
+        data = parsedData;
+        isDataLoaded = true;
+        console.log(data);
+      });
     } else if (selected === null) {
       // User cancelled the selection
     } else {
       // user selected a single directory
     }
   };
- 
 </script>
 
 <div class="container">
@@ -80,16 +78,16 @@
 
 <div class="container">
   {#if isDataLoaded}
-  <VisSingleContainer {data} height={600}>
-    <VisGraph
-      {layoutType}
-      {nodeLabel}
-      {nodeShape}
-      {nodeStroke}
-      {linkFlow}
-      {linkStroke}
-    />
-  </VisSingleContainer>
+    <VisSingleContainer {data} height={600}>
+      <VisGraph
+        {layoutType}
+        {nodeLabel}
+        {nodeShape}
+        {nodeStroke}
+        {linkFlow}
+        {linkStroke}
+      />
+    </VisSingleContainer>
   {/if}
 </div>
 
