@@ -26,6 +26,12 @@ importers:
       '@unovis/ts':
         specifier: 1.5.0-beta.1
         version: 1.5.0-beta.1
+      graphology:
+        specifier: ^0.25.4
+        version: 0.25.4(graphology-types@0.24.7)
+      sigma:
+        specifier: 3.0.0-beta.38
+        version: 3.0.0-beta.38(graphology-types@0.24.7)
     devDependencies:
       '@sveltejs/adapter-static':
         specifier: ^3.0.6
@@ -938,6 +944,10 @@ packages:
   esrap@1.2.2:
     resolution: {integrity: sha512-F2pSJklxx1BlQIQgooczXCPHmcWpn6EsP5oo73LQfonG9fIlIENQ8vMmfGXeojP9MrkzUNAfyU5vdFlR9shHAw==}
 
+  events@3.3.0:
+    resolution: {integrity: sha512-mQw+2fkQbALzQ7V0MY0IqdnXNOeTtP4r0lN9z7AAawCXgqea7bDii20AYrIBrFd/Hx0M2Ocz6S111CaFkUcb0Q==}
+    engines: {node: '>=0.8.x'}
+
   fdir@6.4.2:
     resolution: {integrity: sha512-KnhMXsKSPZlAhp7+IjUkRZKPb4fUyccpDrdFXbi4QL1qkmFh9kVY09Yox+n4MaOb3lHZ1Tv829C3oaaXoMYPDQ==}
     peerDependencies:
@@ -984,6 +994,19 @@ packages:
 
   globrex@0.1.2:
     resolution: {integrity: sha512-uHJgbwAMwNFf5mLst7IWLNg14x1CkeqglJb/K3doi4dw6q2IvAAmM/Y81kevy83wP+Sst+nutFTYOGg3d1lsxg==}
+
+  graphology-types@0.24.7:
+    resolution: {integrity: sha512-tdcqOOpwArNjEr0gNQKCXwaNCWnQJrog14nJNQPeemcLnXQUUGrsCWpWkVKt46zLjcS6/KGoayeJfHHyPDlvwA==}
+
+  graphology-utils@2.5.2:
+    resolution: {integrity: sha512-ckHg8MXrXJkOARk56ZaSCM1g1Wihe2d6iTmz1enGOz4W/l831MBCKSayeFQfowgF8wd+PQ4rlch/56Vs/VZLDQ==}
+    peerDependencies:
+      graphology-types: '>=0.23.0'
+
+  graphology@0.25.4:
+    resolution: {integrity: sha512-33g0Ol9nkWdD6ulw687viS8YJQBxqG5LWII6FI6nul0pq6iM2t5EKquOTFDbyTblRB3O9I+7KX4xI8u5ffekAQ==}
+    peerDependencies:
+      graphology-types: '>=0.24.0'
 
   hasown@2.0.2:
     resolution: {integrity: sha512-0hJU9SCPvmMzIBdZFqNPXWa6dqh7WdH0cII9y+CyS8rG3nL48Bclra9HmKhVVUHyPWNH5Y7xDwAB7bfgSjkUMQ==}
@@ -1088,6 +1111,9 @@ packages:
     engines: {node: ^10 || ^12 || ^13.7 || ^14 || >=15.0.1}
     hasBin: true
 
+  obliterator@2.0.4:
+    resolution: {integrity: sha512-lgHwxlxV1qIg1Eap7LgIeoBWIMFibOjbrYPIPJZcI1mmGAI2m3lNYpK12Y+GBdPQ0U1hRwSord7GIaawz962qQ==}
+
   parent-module@1.0.1:
     resolution: {integrity: sha512-GQ2EWRpQV8/o+Aw8YqtfZZPfNRWZYkbidE9k5rpl/hC3vtHHBfGm2Ifi6qWV+coDGkrUKZAxE3Lot5kcsRlh+g==}
     engines: {node: '>=6'}
@@ -1164,6 +1190,9 @@ packages:
 
   set-cookie-parser@2.7.1:
     resolution: {integrity: sha512-IOc8uWeOZgnb3ptbCURJWNjWUPcO3ZnTTdzsurqERrP6nPyv+paC55vJM0LpOlT2ne+Ix+9+CRG1MNLlyZ4GjQ==}
+
+  sigma@3.0.0-beta.38:
+    resolution: {integrity: sha512-Q5fHTUjQ4bg8AjhV1RqdegzMQBHdPfGenZ1QBbX26DZ1A6p5oswgRkpXhDGZRM251fHdd+riobMSHimbp9CPFA==}
 
   sirv@3.0.0:
     resolution: {integrity: sha512-BPwJGUeDaDCHihkORDchNyyTvWFhcusy1XMmhEVTQTwGeybFbp8YEmB+njbPnth1FibULBSBVwCQni25XlCUDg==}
@@ -2220,6 +2249,8 @@ snapshots:
       '@jridgewell/sourcemap-codec': 1.5.0
       '@types/estree': 1.0.6
 
+  events@3.3.0: {}
+
   fdir@6.4.2: {}
 
   find-root@1.1.0: {}
@@ -2248,6 +2279,18 @@ snapshots:
   globalyzer@0.1.0: {}
 
   globrex@0.1.2: {}
+
+  graphology-types@0.24.7: {}
+
+  graphology-utils@2.5.2(graphology-types@0.24.7):
+    dependencies:
+      graphology-types: 0.24.7
+
+  graphology@0.25.4(graphology-types@0.24.7):
+    dependencies:
+      events: 3.3.0
+      graphology-types: 0.24.7
+      obliterator: 2.0.4
 
   hasown@2.0.2:
     dependencies:
@@ -2347,6 +2390,8 @@ snapshots:
 
   nanoid@3.3.7: {}
 
+  obliterator@2.0.4: {}
+
   parent-module@1.0.1:
     dependencies:
       callsites: 3.1.0
@@ -2434,6 +2479,13 @@ snapshots:
   safer-buffer@2.1.2: {}
 
   set-cookie-parser@2.7.1: {}
+
+  sigma@3.0.0-beta.38(graphology-types@0.24.7):
+    dependencies:
+      events: 3.3.0
+      graphology-utils: 2.5.2(graphology-types@0.24.7)
+    transitivePeerDependencies:
+      - graphology-types
 
   sirv@3.0.0:
     dependencies:

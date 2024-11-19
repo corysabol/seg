@@ -17,8 +17,8 @@
     "@tauri-apps/plugin-dialog": "~2.0.1",
     "@tauri-apps/plugin-fs": "^2.0.1",
     "@tauri-apps/plugin-shell": "~2.0.1",
-    "@unovis/svelte": "1.5.0-beta.1",
-    "@unovis/ts": "1.5.0-beta.1"
+    "graphology": "^0.25.4",
+    "sigma": "3.0.0-beta.38"
   },
   "devDependencies": {
     "@sveltejs/adapter-static": "^3.0.6",
