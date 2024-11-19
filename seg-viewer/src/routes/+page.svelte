@@ -5,8 +5,10 @@
   import { appConfigDir } from "@tauri-apps/api/path";
   import { VisSingleContainer, VisGraph } from "@unovis/svelte";
   import {
+    Graph,
     GraphLayoutType,
     GraphNodeShape,
+    SingleContainer,
     type GraphLinkLabel,
   } from "@unovis/ts";
 
@@ -173,6 +175,24 @@
         isDataLoaded = true;
         console.log(data);
       });
+
+      const container = document.getElementById("vis-container") as HTMLElement;
+      const chart = new SingleContainer(
+        container,
+        {
+          component: new Graph<NodeDatum, LinkDatum>({
+            layoutType: layoutType,
+            nodeLabel: nodeLabel,
+            nodeShape: nodeShape,
+            nodeStroke: (l) => l.color,
+            linkLabel: linkLabel,
+            linkFlow: linkFlow,
+            linkStroke: linkStroke,
+          }),
+          height: 600,
+        },
+        data,
+      );
     } else if (selected === null) {
       // User cancelled the selection
     } else {
@@ -185,8 +205,8 @@
   <button onclick={handle_file_open}>Import data</button>
 </div>
 
-<div class="container">
-  <VisSingleContainer {data} height={600}>
+<div id="vis-container">
+  <!--<VisSingleContainer {data} height={600}>
     <VisGraph
       {layoutType}
       {nodeLabel}
@@ -197,7 +217,7 @@
       {linkStroke}
       onLayoutCalculated={() => console.log("Layout complete")}
     />
-  </VisSingleContainer>
+  </VisSingleContainer>-->
 </div>
 
 <style>
