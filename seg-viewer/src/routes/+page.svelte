@@ -73,7 +73,7 @@
 </script>
 
 <div class="container">
-  <button on:click={handle_file_open}>Import data</button>
+  <button onclick={handle_file_open}>Import data</button>
 </div>
 
 <div class="container">
