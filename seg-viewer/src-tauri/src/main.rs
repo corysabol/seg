@@ -23,6 +23,7 @@ struct NodeDatum {
 #[derive(Clone, Debug, Serialize)]
 struct LinkDatum {
     id: String,
+    label: String,
     source: String,
     target: String,
     active: bool,
@@ -56,22 +57,28 @@ fn load_data(file_path: &str) -> String {
             .expect(format!("Failed to parse data - line number {:?}\n{:?}", idx, line,).as_str());
 
         // Gather the hosts as nodes
+
+        // Source / Scanner Node
         nodes.insert(NodeDatum {
-            id: packet_info.source_ip.to_string(),
+            id: format!("{}:{}", packet_info.source_ip.to_string(), "scanner"),
             label: format!(
-                "{}:{}",
+                "{}:{}:{}",
                 packet_info.network_tag,
-                packet_info.source_ip.to_string()
+                packet_info.source_ip.to_string(),
+                "scanner",
             ),
             shape: "hexagon".to_string(),
             color: "#35D068".to_string(),
         });
+
+        // Destination / listner node
         nodes.insert(NodeDatum {
-            id: packet_info.listener_ip.to_string(),
+            id: format!("{}:{}", packet_info.listener_ip.to_string(), "listener"),
             label: format!(
-                "{}:{}",
+                "{}:{}:{}",
                 packet_info.network_tag,
-                packet_info.listener_ip.to_string()
+                packet_info.listener_ip.to_string(),
+                "listener",
             ),
             shape: "square".to_string(),
             color: "#35D068".to_string(),
@@ -79,9 +86,15 @@ fn load_data(file_path: &str) -> String {
 
         // Create links
         links.push(LinkDatum {
-            id: packet_info.network_tag,
-            source: packet_info.source_ip.to_string(),
-            target: packet_info.listener_ip.to_string(),
+            id: format!(
+                "{}:{}:{}",
+                packet_info.source_ip.to_string(),
+                packet_info.listener_ip.to_string(),
+                packet_info.target_port.to_string(),
+            ),
+            label: format!("{} -> {}", packet_info.source_port, packet_info.target_port),
+            source: format!("{}:{}", packet_info.source_ip.to_string(), "scanner"),
+            target: format!("{}:{}", packet_info.listener_ip.to_string(), "listener"),
             active: true,
             color: "#35D068".to_string(),
         });
