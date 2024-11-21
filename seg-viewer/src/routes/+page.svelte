@@ -29,12 +29,6 @@
     nodes: NodeDatum[];
     links: LinkDatum[];
   };
-  // =========
-
-  // State ====
-  let isDataLoaded: boolean = $state(false);
-  let data: GraphData = $state({ nodes: [], links: [] });
-  // ==========
 
   const handle_file_open = async () => {
     const selected = await open({
@@ -53,13 +47,17 @@
       console.log(selected);
 
       // Now we need to open the file
-      (
-        invoke("load_data", { filePath: selected[0] }) as Promise<GraphData>
-      ).then((parsedData) => {
-        data = parsedData;
-        isDataLoaded = true;
-        console.log(data);
-      });
+      (invoke("load_data", { filePath: selected[0] }) as Promise<string>).then(
+        (rawData) => {
+          let parsedData = JSON.parse(rawData);
+          let graphData: GraphData = parsedData as GraphData;
+
+          console.log(graphData);
+          console.log(graphData.nodes);
+          processDataToGraph(graphData);
+          console.log(graph);
+        },
+      );
     } else if (selected === null) {
       // User cancelled the selection
     } else {
@@ -69,8 +67,20 @@
 
   const processDataToGraph = (data: GraphData) => {
     // TODO: Process nodes
+    console.log(data.nodes);
+
+    data.nodes.map((n: NodeDatum) => {
+      graph.addNode(n.id, {
+        x: 0,
+        y: 0,
+        label: n.label,
+        color: n.color,
+      });
+    });
     // TODO: Process and add edges
-    console.log("TODO: note yet implemented");
+    data.links.map((l: LinkDatum) => {
+      graph.addEdge(l.source, l.target);
+    });
   };
 
   let container: HTMLElement;
