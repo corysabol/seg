@@ -1,6 +1,7 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
   import { open } from "@tauri-apps/plugin-dialog";
+  import ForceSupervisor from "graphology-layout-force/worker";
   import { open as openFile } from "@tauri-apps/plugin-fs";
   import { appConfigDir } from "@tauri-apps/api/path";
 
@@ -73,6 +74,7 @@
       graph.addNode(n.id, {
         x: 0,
         y: 0,
+        size: 25,
         label: n.label,
         color: n.color,
       });
@@ -85,48 +87,62 @@
 
   let container: HTMLElement;
 
-  const graph = $state(new Graph());
+  const graph = $state(new Graph({ multi: true }));
+  const layout = new ForceSupervisor(graph, {
+    isNodeFixed: (_, attr) => attr.highlighted,
+  });
+  const draggedNode: string | null = null;
+  let isDragging = false;
+
   onMount(() => {
     // Need to figure out how to make the graph a reactive value
     // So that the graph can be updated with imported data by the user.
     //const graph = new Graph();
 
-    graph.addNode("John", {
-      x: 0,
-      y: 10,
-      size: 15,
-      label: "John",
-      color: "blue",
-    });
-    graph.addNode("Mary", {
-      x: 10,
-      y: 0,
-      size: 10,
-      label: "Mary",
-      color: "green",
-    });
-    graph.addNode("Thomas", {
-      x: 7,
-      y: 9,
-      size: 20,
-      label: "Thomas",
-      color: "red",
-    });
-    graph.addNode("Hannah", {
-      x: -7,
-      y: -6,
-      size: 25,
-      label: "Hannah",
-      color: "teal",
-    });
+    //graph.addNode("John", {
+    //  x: 0,
+    //  y: 10,
+    //  size: 15,
+    //  label: "John",
+    //  color: "blue",
+    //});
+    //graph.addNode("Mary", {
+    //  x: 10,
+    //  y: 0,
+    //  size: 10,
+    //  label: "Mary",
+    //  color: "green",
+    //});
+    //graph.addNode("Thomas", {
+    //  x: 7,
+    //  y: 9,
+    //  size: 20,
+    //  label: "Thomas",
+    //  color: "red",
+    //});
+    //graph.addNode("Hannah", {
+    //  x: -7,
+    //  y: -6,
+    //  size: 25,
+    //  label: "Hannah",
+    //  color: "teal",
+    //});
 
-    graph.addEdge("John", "Mary");
-    graph.addEdge("John", "Thomas");
-    graph.addEdge("John", "Hannah");
-    graph.addEdge("Hannah", "Thomas");
-    graph.addEdge("Hannah", "Mary");
+    //graph.addEdge("John", "Mary");
+    //graph.addEdge("John", "Thomas");
+    //graph.addEdge("John", "Hannah");
+    //graph.addEdge("Hannah", "Thomas");
+    //graph.addEdge("Hannah", "Mary");
+
+    layout.start();
 
     const renderer = new Sigma(graph, container);
+
+    renderer.on("downNode", (e) => {});
+    renderer.on("moveBody", (e) => {});
+    renderer.on("clickStage", (e) => {});
+    renderer.on("clickNode", (e) => {});
+    renderer.on("clickEdge", (e) => {});
   });
 </script>
 
