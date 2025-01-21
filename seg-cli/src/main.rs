@@ -40,9 +40,27 @@ enum Commands {
         /// The protocol to listen for connection over.
         #[arg(long, value_enum, default_value = "both")]
         protocol: ScanProtocol,
-        /// Port used to access the host (typicall 22 for ssh)
+        /// Port used to access the host (typically 22 for ssh)
         #[arg(short, long, default_value = "22")]
         access_port: String,
+    },
+    /// Parse seg JSONL scan data into various useful formats.
+    Parse {
+        /// The JSONL file of scan data to parse.
+        #[arg(short, long)]
+        input_file: String,
+        /// A dir of JSONL files to parse.
+        #[arg(short, long)]
+        input_dir: String,
+        /// Output as CSV.
+        #[arg(long)]
+        csv: bool,
+        /// Output as Netflow.
+        #[arg(long)]
+        netflow: bool,
+        /// Output file name (can be a path).
+        #[arg(short, long)]
+        out: String,
     },
 }
 

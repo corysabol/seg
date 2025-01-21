@@ -95,45 +95,6 @@
   let isDragging = false;
 
   onMount(() => {
-    // Need to figure out how to make the graph a reactive value
-    // So that the graph can be updated with imported data by the user.
-    //const graph = new Graph();
-
-    //graph.addNode("John", {
-    //  x: 0,
-    //  y: 10,
-    //  size: 15,
-    //  label: "John",
-    //  color: "blue",
-    //});
-    //graph.addNode("Mary", {
-    //  x: 10,
-    //  y: 0,
-    //  size: 10,
-    //  label: "Mary",
-    //  color: "green",
-    //});
-    //graph.addNode("Thomas", {
-    //  x: 7,
-    //  y: 9,
-    //  size: 20,
-    //  label: "Thomas",
-    //  color: "red",
-    //});
-    //graph.addNode("Hannah", {
-    //  x: -7,
-    //  y: -6,
-    //  size: 25,
-    //  label: "Hannah",
-    //  color: "teal",
-    //});
-
-    //graph.addEdge("John", "Mary");
-    //graph.addEdge("John", "Thomas");
-    //graph.addEdge("John", "Hannah");
-    //graph.addEdge("Hannah", "Thomas");
-    //graph.addEdge("Hannah", "Mary");
-
     layout.start();
 
     const renderer = new Sigma(graph, container);
